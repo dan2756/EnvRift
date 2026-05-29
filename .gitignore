@@ -1,0 +1,4 @@
+/envdiff
+/dist/
+*.test
+*.out

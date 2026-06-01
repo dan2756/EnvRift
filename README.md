@@ -28,6 +28,28 @@ Only keys are compared, since example files usually hold placeholder values.
 Exit status is `0` when both files define the same keys, `1` when they differ and
 `2` on errors (unreadable file, syntax error).
 
+## Syntax
+
+envdiff has its own dotenv parser and understands what you'd expect to find in
+the wild:
+
+```sh
+# full-line comments
+PLAIN=value                  # inline comment (needs a space before '#')
+export EXPORTED=1
+SPACED = around the equals
+COLOR=#fff                   # '#' with no space before it is part of the value
+SINGLE='literal $HOME \n'
+DOUBLE="escapes: \n \t \" \\"
+BACKTICK=`it's "quoted"`
+PRIVATE_KEY="-----BEGIN KEY-----
+spans several lines
+-----END KEY-----"
+```
+
+CRLF line endings and a UTF-8 byte order mark are fine. Syntax errors are
+reported as `file:line: message`.
+
 ## License
 
 MIT

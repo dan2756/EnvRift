@@ -64,6 +64,16 @@ func TestParse(t *testing.T) {
 		{"dots and dashes in keys", "spring.profile-name=dev", []kv{{"spring.profile-name", "dev"}}},
 		{"lowercase key", "foo=1", []kv{{"foo", "1"}}},
 		{"duplicate keys kept in order", "A=1\nB=2\nA=3", []kv{{"A", "1"}, {"B", "2"}, {"A", "3"}}},
+		{"multiline double quoted", "KEY=\"-----BEGIN-----\nabc\n-----END-----\"\nNEXT=1",
+			[]kv{{"KEY", "-----BEGIN-----\nabc\n-----END-----"}, {"NEXT", "1"}}},
+		{"multiline with escapes", "MSG=\"line one\\n\nline \\\"two\\\"\"", []kv{{"MSG", "line one\n\nline \"two\""}}},
+		{"multiline single quoted", "A='x\ny'", []kv{{"A", "x\ny"}}},
+		{"multiline backtick", "A=`x\n# not a comment\ny`", []kv{{"A", "x\n# not a comment\ny"}}},
+		{"crlf", "A=1\r\nB=two words\r\n# c\r\nC='q'\r\n", []kv{{"A", "1"}, {"B", "two words"}, {"C", "q"}}},
+		{"crlf inline comment", "A=1 # c\r\nB=2\r\n", []kv{{"A", "1"}, {"B", "2"}}},
+		{"crlf multiline", "A=\"x\r\ny\"\r\n", []kv{{"A", "x\ny"}}},
+		{"bom", "\uFEFFA=1\nB=2", []kv{{"A", "1"}, {"B", "2"}}},
+		{"bom and crlf", "\uFEFFexport A=1\r\n", []kv{{"A", "1"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -96,6 +106,9 @@ func TestParseErrors(t *testing.T) {
 		{"unterminated single", "A=1\nFOO='bar", 2, "unterminated single-quoted value"},
 		{"unterminated backtick", "FOO=`bar", 1, "unterminated backtick-quoted value"},
 		{"text after quote", `FOO="bar" baz`, 1, `unexpected "baz" after closing "`},
+		{"unterminated multiline", "A=1\nB=\"start\nmore\nC=3\n", 2, "unterminated double-quoted value"},
+		{"error after multiline value", "A=\"x\ny\nz\"\nBAD LINE\n", 4, `expected '=' after key "BAD"`},
+		{"crlf error line", "A=1\r\nB=2\r\noops\r\n", 3, `expected '=' after key "oops"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -128,6 +141,16 @@ func TestEntryLines(t *testing.T) {
 	}
 	if want := []int{1, 4, 5}; !reflect.DeepEqual(got, want) {
 		t.Errorf("lines = %v, want %v", got, want)
+	}
+}
+
+func TestEntryLinesAfterMultiline(t *testing.T) {
+	f, err := Parse("test.env", []byte("A=\"one\ntwo\nthree\"\nB=2\r\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.Entries[1].Line; got != 4 {
+		t.Errorf("B on line %d, want 4", got)
 	}
 }
 

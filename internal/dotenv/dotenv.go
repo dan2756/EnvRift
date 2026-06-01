@@ -85,9 +85,12 @@ func ReadFile(path string) (*File, error) {
 // Supported syntax: KEY=value lines with optional "export " prefix and
 // whitespace around '=', full-line and inline comments, single-quoted
 // (literal), double-quoted (with \n, \t, \" and \\ escapes) and
-// backtick-quoted values.
+// backtick-quoted values. Quoted values may span several lines. CRLF line
+// endings and a leading UTF-8 byte order mark are accepted.
 func Parse(name string, data []byte) (*File, error) {
-	p := &parser{name: name, src: string(data), line: 1, file: newFile(name)}
+	src := strings.TrimPrefix(string(data), "\uFEFF")
+	src = strings.ReplaceAll(src, "\r\n", "\n")
+	p := &parser{name: name, src: src, line: 1, file: newFile(name)}
 	if err := p.parse(); err != nil {
 		return nil, err
 	}
@@ -194,14 +197,15 @@ func (p *parser) unquoted() string {
 	return strings.TrimRight(s, " \t")
 }
 
-// quoted reads a value delimited by q. Escape sequences are only
-// interpreted when escapes is set (double quotes).
+// quoted reads a value delimited by q, which may span lines. Escape
+// sequences are only interpreted when escapes is set (double quotes).
+// Errors for unterminated values point at the line of the opening quote.
 func (p *parser) quoted(q byte, escapes bool) (string, error) {
 	open := p.line
 	p.pos++
 	var b strings.Builder
 	for {
-		if p.eof() || p.src[p.pos] == '\n' {
+		if p.eof() {
 			return "", &ParseError{p.name, open, "unterminated " + quoteName(q) + " value"}
 		}
 		c := p.src[p.pos]
@@ -211,6 +215,10 @@ func (p *parser) quoted(q byte, escapes bool) (string, error) {
 			return b.String(), p.afterQuote(q)
 		case c == '\\' && escapes:
 			p.escape(&b)
+		case c == '\n':
+			b.WriteByte(c)
+			p.pos++
+			p.line++
 		default:
 			b.WriteByte(c)
 			p.pos++

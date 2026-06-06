@@ -24,6 +24,18 @@ envdiff .env .env.example
 ```
 
 Only keys are compared, since example files usually hold placeholder values.
+To compare values too, pass `--values`. Values are masked so the output is safe
+to paste into a CI log: long values keep two characters at each end, short ones
+are redacted completely. `--show-values` prints them in full.
+
+```sh
+envdiff --values .env.staging .env.production
+```
+
+```
+~ DATABASE_URL  differs: .env.staging=po****ng .env.production=po****od
+~ DEBUG         differs: .env.staging=<redacted> .env.production=<redacted>
+```
 
 Exit status is `0` when both files define the same keys, `1` when they differ and
 `2` on errors (unreadable file, syntax error).

@@ -40,6 +40,23 @@ envdiff --values .env.staging .env.production
 Exit status is `0` when both files define the same keys, `1` when they differ and
 `2` on errors (unreadable file, syntax error).
 
+### Filtering
+
+```sh
+# keys that are fine to differ
+envdiff --ignore PORT,LOG_LEVEL .env .env.example
+
+# public build-time variables live elsewhere
+envdiff --ignore-prefix NEXT_PUBLIC_ --ignore-prefix VITE_ .env .env.example
+
+# only care that production has everything the example lists
+envdiff --only-missing .env.example .env.production
+```
+
+`--ignore` and `--ignore-prefix` take comma-separated lists and can be repeated.
+`--only-missing` drops the `+` lines: keys the other file has that the first
+one doesn't.
+
 ## Syntax
 
 envdiff has its own dotenv parser and understands what you'd expect to find in

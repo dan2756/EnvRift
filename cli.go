@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/dan2756/envdiff/internal/diff"
 	"github.com/dan2756/envdiff/internal/dotenv"
@@ -23,19 +24,39 @@ as missing; keys only in OTHER are reported as extra. Only keys are compared
 unless --values is given.
 
 Flags:
-      --values        also compare values; differing values are masked
-      --show-values   print values in full (implies --values)
-  -h, --help          show this help
-      --version       print the version and exit
+      --values               also compare values; differing values are masked
+      --show-values          print values in full (implies --values)
+      --ignore KEYS          skip these keys (comma-separated, repeatable)
+      --ignore-prefix PFX    skip keys starting with PFX (comma-separated, repeatable)
+      --only-missing         only report keys missing from OTHER, not extras
+  -h, --help                 show this help
+      --version              print the version and exit
 
 Exit status: 0 if the files match, 1 if they differ, 2 on error.
 `
 
 type config struct {
-	files      []string
-	values     bool
-	showValues bool
-	version    bool
+	files          []string
+	values         bool
+	showValues     bool
+	onlyMissing    bool
+	ignore         listFlag
+	ignorePrefixes listFlag
+	version        bool
+}
+
+// listFlag collects comma-separated values; the flag may be repeated.
+type listFlag []string
+
+func (l *listFlag) String() string { return strings.Join(*l, ",") }
+
+func (l *listFlag) Set(s string) error {
+	for _, v := range strings.Split(s, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			*l = append(*l, v)
+		}
+	}
+	return nil
 }
 
 func parseArgs(args []string) (*config, error) {
@@ -44,6 +65,9 @@ func parseArgs(args []string) (*config, error) {
 	fs.SetOutput(io.Discard)
 	fs.BoolVar(&c.values, "values", false, "")
 	fs.BoolVar(&c.showValues, "show-values", false, "")
+	fs.BoolVar(&c.onlyMissing, "only-missing", false, "")
+	fs.Var(&c.ignore, "ignore", "")
+	fs.Var(&c.ignorePrefixes, "ignore-prefix", "")
 	fs.BoolVar(&c.version, "version", false, "")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -56,7 +80,12 @@ func parseArgs(args []string) (*config, error) {
 }
 
 func (c *config) diffOptions() diff.Options {
-	return diff.Options{Values: c.values}
+	return diff.Options{
+		Values:         c.values,
+		OnlyMissing:    c.onlyMissing,
+		Ignore:         c.ignore,
+		IgnorePrefixes: c.ignorePrefixes,
+	}
 }
 
 func run(args []string, stdout, stderr io.Writer) int {

@@ -18,8 +18,8 @@ func parse(t *testing.T, name, src string) *dotenv.File {
 
 func TestCompareKeys(t *testing.T) {
 	tests := []struct {
-		name          string
-		ref, target   string
+		name           string
+		ref, target    string
 		missing, extra []string
 	}{
 		{"identical", "A=1\nB=2", "A=1\nB=2", []string{}, []string{}},
@@ -67,5 +67,66 @@ func TestCompareValues(t *testing.T) {
 	}
 	if r.Equal() {
 		t.Error("Equal() = true for files with differences")
+	}
+}
+
+func TestCompareFilters(t *testing.T) {
+	ref := parse(t, "ref", "A=1\nNEXT_PUBLIC_URL=x\nNEXT_PUBLIC_KEY=y\nSECRET=1\nLOCAL_ONLY=1")
+	target := parse(t, "target", "A=2\nNEXT_PUBLIC_URL=z\nSECRET=1\nNEW=1\nNEXT_PUBLIC_NEW=1")
+	tests := []struct {
+		name           string
+		opts           Options
+		missing, extra []string
+		changed        []string
+		common         int
+	}{
+		{"none", Options{}, []string{"NEXT_PUBLIC_KEY", "LOCAL_ONLY"}, []string{"NEW", "NEXT_PUBLIC_NEW"}, nil, 3},
+		{"ignore", Options{Ignore: []string{"LOCAL_ONLY", "NEW"}},
+			[]string{"NEXT_PUBLIC_KEY"}, []string{"NEXT_PUBLIC_NEW"}, nil, 3},
+		{"ignore prefix", Options{IgnorePrefixes: []string{"NEXT_PUBLIC_"}},
+			[]string{"LOCAL_ONLY"}, []string{"NEW"}, nil, 2},
+		{"only missing", Options{OnlyMissing: true},
+			[]string{"NEXT_PUBLIC_KEY", "LOCAL_ONLY"}, []string{}, nil, 3},
+		{"values with prefix ignored", Options{Values: true, IgnorePrefixes: []string{"NEXT_"}},
+			[]string{"LOCAL_ONLY"}, []string{"NEW"}, []string{"A"}, 2},
+		{"everything", Options{Values: true, OnlyMissing: true, Ignore: []string{"A", "LOCAL_ONLY"}, IgnorePrefixes: []string{"NEXT_PUBLIC_"}},
+			[]string{}, []string{}, nil, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := Compare(ref, target, tt.opts)
+			if !reflect.DeepEqual(r.Missing, tt.missing) {
+				t.Errorf("Missing = %q, want %q", r.Missing, tt.missing)
+			}
+			if !reflect.DeepEqual(r.Extra, tt.extra) {
+				t.Errorf("Extra = %q, want %q", r.Extra, tt.extra)
+			}
+			var changed []string
+			for _, c := range r.Changed {
+				changed = append(changed, c.Key)
+			}
+			if !reflect.DeepEqual(changed, tt.changed) {
+				t.Errorf("Changed = %q, want %q", changed, tt.changed)
+			}
+			if r.Common != tt.common {
+				t.Errorf("Common = %d, want %d", r.Common, tt.common)
+			}
+		})
+	}
+}
+
+func TestIgnored(t *testing.T) {
+	o := Options{Ignore: []string{"PORT"}, IgnorePrefixes: []string{"VITE_", "NEXT_PUBLIC_"}}
+	for key, want := range map[string]bool{
+		"PORT":            true,
+		"PORT2":           false,
+		"VITE_API":        true,
+		"NEXT_PUBLIC_URL": true,
+		"NEXT_URL":        false,
+		"vite_api":        false,
+	} {
+		if got := o.Ignored(key); got != want {
+			t.Errorf("Ignored(%q) = %v, want %v", key, got, want)
+		}
 	}
 }

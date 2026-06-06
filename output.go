@@ -17,7 +17,7 @@ type printer struct {
 func (p *printer) result(r *diff.Result) {
 	ref, target := r.Reference.Name, r.Target.Name
 	if r.Equal() {
-		fmt.Fprintf(p.w, "%s and %s match (%d keys)\n", ref, target, len(r.Reference.Keys()))
+		fmt.Fprintf(p.w, "%s and %s match (%d keys)\n", ref, target, r.Common)
 		return
 	}
 	width := 0

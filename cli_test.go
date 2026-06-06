@@ -91,6 +91,30 @@ func TestRunMasksValues(t *testing.T) {
 	}
 }
 
+func TestRunFilters(t *testing.T) {
+	setup(t, map[string]string{
+		".env":         "PORT=3000\nDATABASE_URL=x\nNEXT_PUBLIC_API=y\nNEXT_PUBLIC_SITE=z\n",
+		".env.example": "DATABASE_URL=\nLEGACY=1\n",
+	})
+	tests := []struct {
+		args []string
+		code int
+	}{
+		{[]string{".env", ".env.example"}, 1},
+		{[]string{"--ignore", "PORT", "--ignore-prefix", "NEXT_PUBLIC_", ".env", ".env.example"}, 1},
+		{[]string{"--ignore", "PORT,LEGACY", "--ignore-prefix", "NEXT_PUBLIC_", ".env", ".env.example"}, 0},
+		{[]string{"--ignore=PORT", "--ignore=LEGACY", "--ignore-prefix=NEXT_PUBLIC_API,NEXT_PUBLIC_SITE", ".env", ".env.example"}, 0},
+		{[]string{"--only-missing", "--ignore", "PORT", "--ignore-prefix", "NEXT_PUBLIC_", ".env", ".env.example"}, 0},
+		{[]string{"--only-missing", ".env.example", ".env"}, 1},
+	}
+	for _, tt := range tests {
+		code, out, errOut := runCLI(tt.args...)
+		if code != tt.code {
+			t.Errorf("envdiff %s: exit %d, want %d\n%s%s", strings.Join(tt.args, " "), code, tt.code, out, errOut)
+		}
+	}
+}
+
 func TestMask(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"", ""},

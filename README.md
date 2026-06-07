@@ -57,6 +57,40 @@ envdiff --only-missing .env.example .env.production
 `--only-missing` drops the `+` lines: keys the other file has that the first
 one doesn't.
 
+## Output
+
+The default output is a diff-style list, colored when stdout is a terminal.
+Set `NO_COLOR` to turn color off.
+
+| Line | Meaning |
+| --- | --- |
+| `- KEY  missing in OTHER` | the first file has `KEY`, the other doesn't |
+| `+ KEY  only in OTHER` | the other file has `KEY`, the first doesn't |
+| `~ KEY  differs: ...` | both have `KEY` with different values (`--values`) |
+
+`--json` prints a machine-readable report instead:
+
+```json
+{
+  "reference": ".env",
+  "files": [".env", ".env.example"],
+  "match": false,
+  "comparisons": [
+    {
+      "file": ".env.example",
+      "match": false,
+      "missing": ["REDIS_URL"],
+      "extra": ["LEGACY_TOKEN"],
+      "differs": []
+    }
+  ]
+}
+```
+
+Values in `differs` are masked the same way as in the text output unless
+`--show-values` is given. `-q`/`--quiet` prints nothing and only sets the exit
+status; errors still go to stderr.
+
 ## Syntax
 
 envdiff has its own dotenv parser and understands what you'd expect to find in

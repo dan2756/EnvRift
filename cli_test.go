@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,6 +114,82 @@ func TestRunFilters(t *testing.T) {
 		if code != tt.code {
 			t.Errorf("envdiff %s: exit %d, want %d\n%s%s", strings.Join(tt.args, " "), code, tt.code, out, errOut)
 		}
+	}
+}
+
+func TestRunQuiet(t *testing.T) {
+	setup(t, map[string]string{"a.env": "A=1\n", "b.env": "B=1\n", "bad.env": "nope\n"})
+	for _, flag := range []string{"-q", "--quiet"} {
+		code, out, _ := runCLI(flag, "a.env", "b.env")
+		if code != 1 || out != "" {
+			t.Errorf("%s: exit %d, stdout %q; want 1 and no output", flag, code, out)
+		}
+		code, out, _ = runCLI(flag, "a.env", "a.env")
+		if code != 0 || out != "" {
+			t.Errorf("%s on equal files: exit %d, stdout %q; want 0 and no output", flag, code, out)
+		}
+	}
+	// Errors still go to stderr so a failing CI job explains itself.
+	code, _, errOut := runCLI("-q", "a.env", "bad.env")
+	if code != 2 || !strings.Contains(errOut, "bad.env:1:") {
+		t.Errorf("quiet parse error: exit %d, stderr %q", code, errOut)
+	}
+}
+
+func TestRunJSON(t *testing.T) {
+	setup(t, map[string]string{
+		".env":         "A=1\nB=a-long-secret-value\nC=3\n",
+		".env.example": "B=another-long-value\nC=3\nD=4\n",
+	})
+	code, out, errOut := runCLI("--json", "--values", ".env", ".env.example")
+	if code != 1 {
+		t.Fatalf("exit %d, want 1 (stderr %q)", code, errOut)
+	}
+	var rep jsonReport
+	if err := json.Unmarshal([]byte(out), &rep); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	}
+	if rep.Match || rep.Reference != ".env" || len(rep.Comparisons) != 1 {
+		t.Fatalf("unexpected report: %+v", rep)
+	}
+	c := rep.Comparisons[0]
+	if c.File != ".env.example" || c.Match {
+		t.Errorf("comparison = %+v", c)
+	}
+	if len(c.Missing) != 1 || c.Missing[0] != "A" || len(c.Extra) != 1 || c.Extra[0] != "D" {
+		t.Errorf("missing = %q, extra = %q", c.Missing, c.Extra)
+	}
+	want := jsonChange{Key: "B", Reference: "a-****ue", Target: "an****ue"}
+	if len(c.Differs) != 1 || c.Differs[0] != want {
+		t.Errorf("differs = %+v, want [%+v]", c.Differs, want)
+	}
+
+	// Key-only comparisons still emit empty arrays, not null.
+	_, out, _ = runCLI("--json", ".env", ".env")
+	if !strings.Contains(out, `"missing": []`) || !strings.Contains(out, `"differs": []`) || !strings.Contains(out, `"match": true`) {
+		t.Errorf("JSON for equal files:\n%s", out)
+	}
+}
+
+func TestColor(t *testing.T) {
+	setup(t, map[string]string{"a.env": "A=1\n", "b.env": "B=1\n"})
+	orig := isTerminal
+	t.Cleanup(func() { isTerminal = orig })
+	isTerminal = func(io.Writer) bool { return true }
+	t.Setenv("TERM", "xterm-256color")
+
+	t.Setenv("NO_COLOR", "")
+	if _, out, _ := runCLI("a.env", "b.env"); !strings.Contains(out, "\x1b[31m- A") {
+		t.Errorf("expected colored output on a terminal, got %q", out)
+	}
+	t.Setenv("NO_COLOR", "1")
+	if _, out, _ := runCLI("a.env", "b.env"); strings.Contains(out, "\x1b[") {
+		t.Errorf("NO_COLOR set but output has escapes: %q", out)
+	}
+	t.Setenv("NO_COLOR", "")
+	isTerminal = orig
+	if _, out, _ := runCLI("a.env", "b.env"); strings.Contains(out, "\x1b[") {
+		t.Errorf("non-terminal output has escapes: %q", out)
 	}
 }
 

@@ -29,8 +29,12 @@ Flags:
       --ignore KEYS          skip these keys (comma-separated, repeatable)
       --ignore-prefix PFX    skip keys starting with PFX (comma-separated, repeatable)
       --only-missing         only report keys missing from OTHER, not extras
+      --json                 print a JSON report
+  -q, --quiet                print nothing; only set the exit status
   -h, --help                 show this help
       --version              print the version and exit
+
+Output is colored on a terminal unless NO_COLOR is set.
 
 Exit status: 0 if the files match, 1 if they differ, 2 on error.
 `
@@ -42,6 +46,8 @@ type config struct {
 	onlyMissing    bool
 	ignore         listFlag
 	ignorePrefixes listFlag
+	json           bool
+	quiet          bool
 	version        bool
 }
 
@@ -68,6 +74,9 @@ func parseArgs(args []string) (*config, error) {
 	fs.BoolVar(&c.onlyMissing, "only-missing", false, "")
 	fs.Var(&c.ignore, "ignore", "")
 	fs.Var(&c.ignorePrefixes, "ignore-prefix", "")
+	fs.BoolVar(&c.json, "json", false, "")
+	fs.BoolVar(&c.quiet, "q", false, "")
+	fs.BoolVar(&c.quiet, "quiet", false, "")
 	fs.BoolVar(&c.version, "version", false, "")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -108,8 +117,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return exitError
 	}
 	res := diff.Compare(files[0], files[1], cfg.diffOptions())
-	p := &printer{w: stdout, showValues: cfg.showValues}
-	p.result(res)
+	switch {
+	case cfg.quiet:
+	case cfg.json:
+		if err := writeJSON(stdout, res, cfg.showValues); err != nil {
+			fmt.Fprintf(stderr, "envdiff: %v\n", err)
+			return exitError
+		}
+	default:
+		p := &printer{w: stdout, showValues: cfg.showValues, color: colorEnabled(stdout)}
+		p.result(res)
+	}
 	if !res.Equal() {
 		return exitDiff
 	}

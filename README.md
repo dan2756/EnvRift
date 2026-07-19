@@ -37,8 +37,28 @@ envdiff --values .env.staging .env.production
 ~ DEBUG         differs: .env.staging=<redacted> .env.production=<redacted>
 ```
 
-Exit status is `0` when both files define the same keys, `1` when they differ and
+Exit status is `0` when the files define the same keys, `1` when they differ and
 `2` on errors (unreadable file, syntax error).
+
+### More than two files
+
+Pass any number of files; each one is compared against the first. Instead of a
+list you get a matrix of the keys that aren't present everywhere:
+
+```sh
+envdiff .env.example .env.staging .env.production
+```
+
+```
+KEY            .env.example  .env.staging  .env.production
+SENTRY_DSN     ✓             ✓             -
+FEATURE_FLAGS  -             ✓             -
+
+2 of 23 keys differ across 3 files
+```
+
+With `--values`, a `~` marks a value that differs from the first file's, and the
+masked values are listed below the matrix.
 
 ### Filtering
 

@@ -90,3 +90,63 @@ func Compare(ref, target *dotenv.File, opts Options) *Result {
 	}
 	return r
 }
+
+// Row is one key's presence across a set of files.
+type Row struct {
+	Key     string
+	Present []bool // per file, in the order given to Matrix
+	Differs []bool // per file: value differs from the reference's (Options.Values only)
+}
+
+// Complete reports whether the key exists in every file, with the same
+// value as the reference when values are compared.
+func (r Row) Complete() bool {
+	for i := range r.Present {
+		if !r.Present[i] || r.Differs[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// Matrix reports which keys exist in which of files, where files[0] is the
+// reference. Rows come in the reference's order, followed by keys that only
+// other files have, in the order they are first seen. With OnlyMissing, keys
+// the reference lacks are left out.
+func Matrix(files []*dotenv.File, opts Options) []Row {
+	if len(files) == 0 {
+		return nil
+	}
+	ref := files[0]
+	var keys []string
+	seen := make(map[string]bool)
+	add := func(k string) {
+		if !seen[k] && !opts.Ignored(k) {
+			seen[k] = true
+			keys = append(keys, k)
+		}
+	}
+	for _, k := range ref.Keys() {
+		add(k)
+	}
+	if !opts.OnlyMissing {
+		for _, f := range files[1:] {
+			for _, k := range f.Keys() {
+				add(k)
+			}
+		}
+	}
+
+	rows := make([]Row, 0, len(keys))
+	for _, k := range keys {
+		row := Row{Key: k, Present: make([]bool, len(files)), Differs: make([]bool, len(files))}
+		rv, inRef := ref.Lookup(k)
+		for i, f := range files {
+			v, ok := f.Lookup(k)
+			row.Present[i] = ok
+			row.Differs[i] = opts.Values && inRef && ok && v != rv
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}

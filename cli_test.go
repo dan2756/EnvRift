@@ -50,7 +50,8 @@ func TestRunExitCodes(t *testing.T) {
 		{"same file values", []string{"--values", ".env", ".env"}, 0, "match", ""},
 		{"unreadable file", []string{".env", "nope.env"}, 2, "", "nope.env"},
 		{"parse error", []string{".env", "bad.env"}, 2, "", "bad.env:2:"},
-		{"one file", []string{".env"}, 2, "", "expected two files, got 1"},
+		{"one file", []string{".env"}, 2, "", "need at least two files to compare, got 1"},
+		{"no files", []string{}, 2, "", "got 0"},
 		{"unknown flag", []string{"--nope", ".env", ".env"}, 2, "", "flag provided but not defined"},
 		{"help", []string{"--help"}, 0, "Usage: envdiff", ""},
 		{"short help", []string{"-h"}, 0, "Usage: envdiff", ""},
@@ -190,6 +191,50 @@ func TestColor(t *testing.T) {
 	isTerminal = orig
 	if _, out, _ := runCLI("a.env", "b.env"); strings.Contains(out, "\x1b[") {
 		t.Errorf("non-terminal output has escapes: %q", out)
+	}
+}
+
+func TestRunMatrix(t *testing.T) {
+	setup(t, map[string]string{
+		".env":            "A=1\nB=2\nC=3\nD=4\n",
+		".env.staging":    "A=1\nB=2\nC=3\nD=4\nE=5\n",
+		".env.production": "A=1\nB=two\nD=4\n",
+		".env.copy":       "D=4\nC=3\nB=2\nA=1\n",
+	})
+	code, out, errOut := runCLI(".env", ".env.staging", ".env.production")
+	if code != 1 {
+		t.Fatalf("exit %d, want 1 (stderr %q)", code, errOut)
+	}
+	want := "" +
+		"KEY  .env  .env.staging  .env.production\n" +
+		"C    ✓     ✓             -\n" +
+		"E    -     ✓             -\n" +
+		"\n" +
+		"2 of 5 keys differ across 3 files\n"
+	if out != want {
+		t.Errorf("matrix output:\n%s\nwant:\n%s", out, want)
+	}
+
+	_, out, _ = runCLI("--values", "--show-values", "--only-missing", ".env", ".env.staging", ".env.production")
+	for _, s := range []string{"B    ✓     ✓             ~", `~ B  .env="2" .env.production="two"`, "2 of 4 keys differ"} {
+		if !strings.Contains(out, s) {
+			t.Errorf("--values matrix missing %q:\n%s", s, out)
+		}
+	}
+
+	code, out, _ = runCLI(".env", ".env.copy", ".env.copy")
+	if code != 0 || out != "all 3 files match (4 keys)\n" {
+		t.Errorf("matching files: exit %d, output %q", code, out)
+	}
+
+	code, out, _ = runCLI("--json", ".env", ".env.staging", ".env.copy")
+	var rep jsonReport
+	if err := json.Unmarshal([]byte(out), &rep); err != nil {
+		t.Fatal(err)
+	}
+	if code != 1 || rep.Match || len(rep.Files) != 3 || len(rep.Comparisons) != 2 ||
+		rep.Comparisons[0].Match || !rep.Comparisons[1].Match {
+		t.Errorf("JSON for three files: exit %d, %+v", code, rep)
 	}
 }
 

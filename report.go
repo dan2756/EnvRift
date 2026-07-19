@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/dan2756/envdiff/internal/diff"
+	"github.com/dan2756/envdiff/internal/dotenv"
 )
 
 // jsonReport is the --json output. Slices are always present (possibly
@@ -30,30 +31,37 @@ type jsonChange struct {
 	Target    string `json:"target"`
 }
 
-func writeJSON(w io.Writer, r *diff.Result, showValues bool) error {
+func writeJSON(w io.Writer, files []*dotenv.File, results []*diff.Result, showValues bool) error {
 	value := mask
 	if showValues {
 		value = func(v string) string { return v }
 	}
-	c := jsonComparison{
-		File:    r.Target.Name,
-		Match:   r.Equal(),
-		Missing: r.Missing,
-		Extra:   r.Extra,
-		Differs: []jsonChange{},
-	}
-	for _, ch := range r.Changed {
-		c.Differs = append(c.Differs, jsonChange{
-			Key:       ch.Key,
-			Reference: value(ch.Reference),
-			Target:    value(ch.Target),
-		})
-	}
 	rep := jsonReport{
-		Reference:   r.Reference.Name,
-		Files:       []string{r.Reference.Name, r.Target.Name},
-		Match:       r.Equal(),
-		Comparisons: []jsonComparison{c},
+		Reference:   files[0].Name,
+		Files:       make([]string, 0, len(files)),
+		Match:       true,
+		Comparisons: make([]jsonComparison, 0, len(results)),
+	}
+	for _, f := range files {
+		rep.Files = append(rep.Files, f.Name)
+	}
+	for _, r := range results {
+		c := jsonComparison{
+			File:    r.Target.Name,
+			Match:   r.Equal(),
+			Missing: r.Missing,
+			Extra:   r.Extra,
+			Differs: make([]jsonChange, 0, len(r.Changed)),
+		}
+		for _, ch := range r.Changed {
+			c.Differs = append(c.Differs, jsonChange{
+				Key:       ch.Key,
+				Reference: value(ch.Reference),
+				Target:    value(ch.Target),
+			})
+		}
+		rep.Match = rep.Match && c.Match
+		rep.Comparisons = append(rep.Comparisons, c)
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")

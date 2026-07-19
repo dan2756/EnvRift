@@ -130,3 +130,72 @@ func TestIgnored(t *testing.T) {
 		}
 	}
 }
+
+func TestMatrix(t *testing.T) {
+	files := []*dotenv.File{
+		parse(t, ".env", "A=1\nB=2\nC=3\nNEXT_PUBLIC_X=1"),
+		parse(t, ".env.staging", "A=1\nB=changed\nD=4"),
+		parse(t, ".env.production", "C=3\nA=1\nB=2\nE=5\nD=4"),
+	}
+	type row struct {
+		key     string
+		present string // one char per file: 'x' present, '.' missing, '~' differs
+	}
+	render := func(rows []Row) []row {
+		var out []row
+		for _, r := range rows {
+			var b []byte
+			for i := range r.Present {
+				switch {
+				case r.Differs[i]:
+					b = append(b, '~')
+				case r.Present[i]:
+					b = append(b, 'x')
+				default:
+					b = append(b, '.')
+				}
+			}
+			out = append(out, row{r.Key, string(b)})
+		}
+		return out
+	}
+	tests := []struct {
+		name string
+		opts Options
+		want []row
+	}{
+		{"keys", Options{}, []row{
+			{"A", "xxx"}, {"B", "xxx"}, {"C", "x.x"}, {"NEXT_PUBLIC_X", "x.."}, {"D", ".xx"}, {"E", "..x"},
+		}},
+		{"values", Options{Values: true}, []row{
+			{"A", "xxx"}, {"B", "x~x"}, {"C", "x.x"}, {"NEXT_PUBLIC_X", "x.."}, {"D", ".xx"}, {"E", "..x"},
+		}},
+		{"only missing and ignores", Options{OnlyMissing: true, Ignore: []string{"C"}, IgnorePrefixes: []string{"NEXT_"}}, []row{
+			{"A", "xxx"}, {"B", "xxx"},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := render(Matrix(files, tt.opts)); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("Matrix()\n got %v\nwant %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRowComplete(t *testing.T) {
+	tests := []struct {
+		row  Row
+		want bool
+	}{
+		{Row{Present: []bool{true, true}, Differs: []bool{false, false}}, true},
+		{Row{Present: []bool{true, false}, Differs: []bool{false, false}}, false},
+		{Row{Present: []bool{false, true}, Differs: []bool{false, false}}, false},
+		{Row{Present: []bool{true, true}, Differs: []bool{false, true}}, false},
+	}
+	for _, tt := range tests {
+		if got := tt.row.Complete(); got != tt.want {
+			t.Errorf("%+v.Complete() = %v, want %v", tt.row, got, tt.want)
+		}
+	}
+}

@@ -17,18 +17,19 @@ const (
 	exitError = 2
 )
 
-const usage = `Usage: envdiff [flags] FILE OTHER
+const usage = `Usage: envdiff [flags] REFERENCE OTHER [OTHER...]
 
-Compare two .env files. Keys present in FILE but not in OTHER are reported
-as missing; keys only in OTHER are reported as extra. Only keys are compared
-unless --values is given.
+Compare .env files against a reference. Keys the reference has but OTHER
+lacks are reported as missing; keys only in OTHER are reported as extra.
+Only keys are compared unless --values is given. With more than one OTHER,
+a matrix shows which keys exist where.
 
 Flags:
       --values               also compare values; differing values are masked
       --show-values          print values in full (implies --values)
       --ignore KEYS          skip these keys (comma-separated, repeatable)
       --ignore-prefix PFX    skip keys starting with PFX (comma-separated, repeatable)
-      --only-missing         only report keys missing from OTHER, not extras
+      --only-missing         ignore extra keys; only report missing ones
       --json                 print a JSON report
   -q, --quiet                print nothing; only set the exit status
   -h, --help                 show this help
@@ -108,27 +109,39 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case cfg.version:
 		fmt.Fprintln(stdout, "envdiff", buildVersion())
 		return exitOK
-	case len(cfg.files) != 2:
-		return usageError(stderr, fmt.Sprintf("expected two files, got %d", len(cfg.files)))
+	case len(cfg.files) < 2:
+		return usageError(stderr, fmt.Sprintf("need at least two files to compare, got %d", len(cfg.files)))
 	}
 
 	files, ok := loadFiles(cfg.files, stderr)
 	if !ok {
 		return exitError
 	}
-	res := diff.Compare(files[0], files[1], cfg.diffOptions())
+	opts := cfg.diffOptions()
+	results := make([]*diff.Result, 0, len(files)-1)
+	match := true
+	for _, f := range files[1:] {
+		r := diff.Compare(files[0], f, opts)
+		match = match && r.Equal()
+		results = append(results, r)
+	}
+
 	switch {
 	case cfg.quiet:
 	case cfg.json:
-		if err := writeJSON(stdout, res, cfg.showValues); err != nil {
+		if err := writeJSON(stdout, files, results, cfg.showValues); err != nil {
 			fmt.Fprintf(stderr, "envdiff: %v\n", err)
 			return exitError
 		}
 	default:
 		p := &printer{w: stdout, showValues: cfg.showValues, color: colorEnabled(stdout)}
-		p.result(res)
+		if len(results) == 1 {
+			p.result(results[0])
+		} else {
+			p.matrix(files, diff.Matrix(files, opts))
+		}
 	}
-	if !res.Equal() {
+	if !match {
 		return exitDiff
 	}
 	return exitOK

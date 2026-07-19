@@ -5,8 +5,11 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/dan2756/envdiff/internal/diff"
+	"github.com/dan2756/envdiff/internal/dotenv"
 )
 
 const (
@@ -74,6 +77,74 @@ func (p *printer) result(r *diff.Result) {
 		p.line('~', yellow, width, c.Key, fmt.Sprintf("differs: %s=%s %s=%s",
 			ref, p.value(c.Reference), target, p.value(c.Target)))
 	}
+}
+
+// matrix prints the keys that are not identical everywhere as a table with
+// one column per file, followed by the differing values when --values is on.
+func (p *printer) matrix(files []*dotenv.File, rows []diff.Row) {
+	var bad []diff.Row
+	for _, r := range rows {
+		if !r.Complete() {
+			bad = append(bad, r)
+		}
+	}
+	if len(bad) == 0 {
+		fmt.Fprintf(p.w, "all %d files match (%d keys)\n", len(files), len(rows))
+		return
+	}
+
+	width := len("KEY")
+	for _, r := range bad {
+		width = max(width, len(r.Key))
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%-*s", width, "KEY")
+	for _, f := range files {
+		b.WriteString("  " + f.Name)
+	}
+	fmt.Fprintln(p.w, b.String())
+
+	for _, r := range bad {
+		b.Reset()
+		fmt.Fprintf(&b, "%-*s", width, r.Key)
+		for i, f := range files {
+			mark, color := "✓", green
+			switch {
+			case r.Differs[i]:
+				mark, color = "~", yellow
+			case !r.Present[i]:
+				mark, color = "-", red
+			}
+			b.WriteString("  " + p.paint(color, mark))
+			if i < len(files)-1 {
+				b.WriteString(strings.Repeat(" ", utf8.RuneCountInString(f.Name)-1))
+			}
+		}
+		fmt.Fprintln(p.w, b.String())
+	}
+
+	var details []string
+	for _, r := range bad {
+		var vals []string
+		for i, f := range files {
+			if r.Differs[i] {
+				v, _ := f.Lookup(r.Key)
+				vals = append(vals, f.Name+"="+p.value(v))
+			}
+		}
+		if len(vals) > 0 {
+			ref, _ := files[0].Lookup(r.Key)
+			details = append(details, fmt.Sprintf("%s %s  %s=%s %s", p.paint(yellow, "~"),
+				r.Key, files[0].Name, p.value(ref), strings.Join(vals, " ")))
+		}
+	}
+	if len(details) > 0 {
+		fmt.Fprintln(p.w)
+		for _, d := range details {
+			fmt.Fprintln(p.w, d)
+		}
+	}
+	fmt.Fprintf(p.w, "\n%d of %d keys differ across %d files\n", len(bad), len(rows), len(files))
 }
 
 func (p *printer) line(sym byte, color string, width int, key, msg string) {

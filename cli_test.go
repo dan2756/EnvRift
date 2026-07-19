@@ -238,6 +238,53 @@ func TestRunMatrix(t *testing.T) {
 	}
 }
 
+func TestRunStrict(t *testing.T) {
+	setup(t, map[string]string{
+		".env":         "API_KEY=abc\nDEBUG=0\nlog_level=info\nDEBUG=1\n",
+		".env.example": "API_KEY=\nDEBUG=0\nlog_level=\n",
+		"clean.env":    "API_KEY=x\nDEBUG=1\n",
+		"clean2.env":   "API_KEY=y\nDEBUG=0\n",
+	})
+	if code, _, _ := runCLI(".env", ".env.example"); code != 0 {
+		t.Fatalf("keys match without --strict, got exit %d", code)
+	}
+	code, out, _ := runCLI("--strict", ".env", ".env.example")
+	if code != 1 {
+		t.Errorf("--strict exit %d, want 1", code)
+	}
+	for _, want := range []string{
+		"! DEBUG      duplicate in .env (lines 2, 4)",
+		"! log_level  not UPPER_SNAKE_CASE in .env (line 3)",
+		"! API_KEY    empty in .env.example (line 1)",
+		"! log_level  empty in .env.example (line 3)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--strict output missing %q:\n%s", want, out)
+		}
+	}
+
+	if code, out, _ := runCLI("--strict", "--ignore", "log_level,API_KEY,DEBUG", ".env", ".env.example"); code != 0 {
+		t.Errorf("--strict with everything ignored: exit %d\n%s", code, out)
+	}
+	if code, _, _ := runCLI("--strict", "clean.env", "clean2.env", "clean.env"); code != 0 {
+		t.Errorf("--strict on clean files: exit %d", code)
+	}
+	// A file given twice is only checked once.
+	_, out, _ = runCLI("--strict", ".env", ".env.example", ".env")
+	if n := strings.Count(out, "duplicate in .env"); n != 1 {
+		t.Errorf("duplicate reported %d times:\n%s", n, out)
+	}
+
+	_, out, _ = runCLI("--strict", "--json", ".env", ".env.example")
+	var rep jsonReport
+	if err := json.Unmarshal([]byte(out), &rep); err != nil {
+		t.Fatal(err)
+	}
+	if rep.Match || len(rep.Issues) != 5 || rep.Issues[0].Kind != "duplicate" || len(rep.Comparisons[0].Missing) != 0 {
+		t.Errorf("--strict --json: %+v", rep)
+	}
+}
+
 func TestMask(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"", ""},

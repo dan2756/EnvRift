@@ -30,6 +30,8 @@ Flags:
       --ignore KEYS          skip these keys (comma-separated, repeatable)
       --ignore-prefix PFX    skip keys starting with PFX (comma-separated, repeatable)
       --only-missing         ignore extra keys; only report missing ones
+      --strict               also flag duplicate keys, empty values and keys
+                             that aren't UPPER_SNAKE_CASE
       --json                 print a JSON report
   -q, --quiet                print nothing; only set the exit status
   -h, --help                 show this help
@@ -37,7 +39,8 @@ Flags:
 
 Output is colored on a terminal unless NO_COLOR is set.
 
-Exit status: 0 if the files match, 1 if they differ, 2 on error.
+Exit status: 0 if the files match, 1 if they differ (or --strict found a
+problem), 2 on error.
 `
 
 type config struct {
@@ -45,6 +48,7 @@ type config struct {
 	values         bool
 	showValues     bool
 	onlyMissing    bool
+	strict         bool
 	ignore         listFlag
 	ignorePrefixes listFlag
 	json           bool
@@ -73,6 +77,7 @@ func parseArgs(args []string) (*config, error) {
 	fs.BoolVar(&c.values, "values", false, "")
 	fs.BoolVar(&c.showValues, "show-values", false, "")
 	fs.BoolVar(&c.onlyMissing, "only-missing", false, "")
+	fs.BoolVar(&c.strict, "strict", false, "")
 	fs.Var(&c.ignore, "ignore", "")
 	fs.Var(&c.ignorePrefixes, "ignore-prefix", "")
 	fs.BoolVar(&c.json, "json", false, "")
@@ -117,31 +122,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return exitError
 	}
-	opts := cfg.diffOptions()
-	results := make([]*diff.Result, 0, len(files)-1)
-	match := true
-	for _, f := range files[1:] {
-		r := diff.Compare(files[0], f, opts)
-		match = match && r.Equal()
-		results = append(results, r)
-	}
-
+	rep := compare(files, cfg.diffOptions(), cfg.strict)
 	switch {
 	case cfg.quiet:
 	case cfg.json:
-		if err := writeJSON(stdout, files, results, cfg.showValues); err != nil {
+		if err := writeJSON(stdout, rep, cfg.showValues); err != nil {
 			fmt.Fprintf(stderr, "envdiff: %v\n", err)
 			return exitError
 		}
 	default:
 		p := &printer{w: stdout, showValues: cfg.showValues, color: colorEnabled(stdout)}
-		if len(results) == 1 {
-			p.result(results[0])
-		} else {
-			p.matrix(files, diff.Matrix(files, opts))
-		}
+		p.print(rep)
 	}
-	if !match {
+	if !rep.match() {
 		return exitDiff
 	}
 	return exitOK

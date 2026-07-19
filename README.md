@@ -77,6 +77,22 @@ envdiff --only-missing .env.example .env.production
 `--only-missing` drops the `+` lines: keys the other file has that the first
 one doesn't.
 
+### Strict mode
+
+`--strict` also checks every file for keys assigned more than once, keys with an
+empty value and keys that aren't `UPPER_SNAKE_CASE`. Any finding makes the exit
+status `1`.
+
+```
+! DEBUG      duplicate in .env (lines 4, 31)
+! log_level  not UPPER_SNAKE_CASE in .env (line 9)
+! API_KEY    empty in .env (line 2)
+```
+
+Empty placeholders are common in example files, so you may want to run strict
+checks on the real files only, or `--ignore` the keys that are allowed to be
+blank.
+
 ## Output
 
 The default output is a diff-style list, colored when stdout is a terminal.
@@ -87,6 +103,7 @@ Set `NO_COLOR` to turn color off.
 | `- KEY  missing in OTHER` | the first file has `KEY`, the other doesn't |
 | `+ KEY  only in OTHER` | the other file has `KEY`, the first doesn't |
 | `~ KEY  differs: ...` | both have `KEY` with different values (`--values`) |
+| `! KEY  ...` | a `--strict` finding |
 
 `--json` prints a machine-readable report instead:
 
@@ -103,11 +120,13 @@ Set `NO_COLOR` to turn color off.
       "extra": ["LEGACY_TOKEN"],
       "differs": []
     }
-  ]
+  ],
+  "issues": []
 }
 ```
 
-Values in `differs` are masked the same way as in the text output unless
+`issues` holds `--strict` findings as `{"file", "key", "kind", "lines"}` where
+`kind` is `duplicate`, `empty` or `name`. Values in `differs` are masked the same way as in the text output unless
 `--show-values` is given. `-q`/`--quiet` prints nothing and only sets the exit
 status; errors still go to stderr.
 

@@ -9,13 +9,13 @@ import (
 	"unicode/utf8"
 
 	"github.com/dan2756/envdiff/internal/diff"
-	"github.com/dan2756/envdiff/internal/dotenv"
 )
 
 const (
-	red    = "31"
-	green  = "32"
-	yellow = "33"
+	red     = "31"
+	green   = "32"
+	yellow  = "33"
+	magenta = "35"
 )
 
 // printer writes the human-readable report.
@@ -51,105 +51,145 @@ func (p *printer) paint(color, s string) string {
 	return "\x1b[" + color + "m" + s + "\x1b[0m"
 }
 
-func (p *printer) result(r *diff.Result) {
-	ref, target := r.Reference.Name, r.Target.Name
-	if r.Equal() {
-		fmt.Fprintf(p.w, "%s and %s match (%d keys)\n", ref, target, r.Common)
+// entry is one line of the list output: "<sym> KEY  message".
+type entry struct {
+	sym   byte
+	color string
+	key   string
+	msg   string
+}
+
+// print writes the human-readable report.
+func (p *printer) print(r *report) {
+	if len(r.files) > 2 {
+		p.matrix(r)
 		return
 	}
-	width := 0
-	for _, k := range r.Missing {
-		width = max(width, len(k))
+	res := r.results[0]
+	if r.match() {
+		fmt.Fprintf(p.w, "%s and %s match (%d keys)\n", res.Reference.Name, res.Target.Name, res.Common)
+		return
 	}
-	for _, k := range r.Extra {
-		width = max(width, len(k))
+	ref, target := res.Reference.Name, res.Target.Name
+	var es []entry
+	for _, k := range res.Missing {
+		es = append(es, entry{'-', red, k, "missing in " + target})
 	}
-	for _, c := range r.Changed {
-		width = max(width, len(c.Key))
+	for _, k := range res.Extra {
+		es = append(es, entry{'+', green, k, "only in " + target})
 	}
-	for _, k := range r.Missing {
-		p.line('-', red, width, k, "missing in "+target)
+	for _, c := range res.Changed {
+		es = append(es, entry{'~', yellow, c.Key, fmt.Sprintf("differs: %s=%s %s=%s",
+			ref, p.value(c.Reference), target, p.value(c.Target))})
 	}
-	for _, k := range r.Extra {
-		p.line('+', green, width, k, "only in "+target)
-	}
-	for _, c := range r.Changed {
-		p.line('~', yellow, width, c.Key, fmt.Sprintf("differs: %s=%s %s=%s",
-			ref, p.value(c.Reference), target, p.value(c.Target)))
-	}
+	p.entries(append(es, issueEntries(r.issues)...))
 }
 
 // matrix prints the keys that are not identical everywhere as a table with
-// one column per file, followed by the differing values when --values is on.
-func (p *printer) matrix(files []*dotenv.File, rows []diff.Row) {
+// one column per file, followed by the differing values when --values is on
+// and any --strict issues.
+func (p *printer) matrix(r *report) {
 	var bad []diff.Row
-	for _, r := range rows {
-		if !r.Complete() {
-			bad = append(bad, r)
+	for _, row := range r.rows {
+		if !row.Complete() {
+			bad = append(bad, row)
 		}
 	}
 	if len(bad) == 0 {
-		fmt.Fprintf(p.w, "all %d files match (%d keys)\n", len(files), len(rows))
+		fmt.Fprintf(p.w, "all %d files match (%d keys)\n", len(r.files), len(r.rows))
+		if len(r.issues) > 0 {
+			fmt.Fprintln(p.w)
+			p.entries(issueEntries(r.issues))
+		}
 		return
 	}
 
 	width := len("KEY")
-	for _, r := range bad {
-		width = max(width, len(r.Key))
+	for _, row := range bad {
+		width = max(width, len(row.Key))
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%-*s", width, "KEY")
-	for _, f := range files {
+	for _, f := range r.files {
 		b.WriteString("  " + f.Name)
 	}
 	fmt.Fprintln(p.w, b.String())
 
-	for _, r := range bad {
+	ref := r.files[0]
+	var details []entry
+	for _, row := range bad {
 		b.Reset()
-		fmt.Fprintf(&b, "%-*s", width, r.Key)
-		for i, f := range files {
+		fmt.Fprintf(&b, "%-*s", width, row.Key)
+		var vals []string
+		for i, f := range r.files {
 			mark, color := "✓", green
 			switch {
-			case r.Differs[i]:
+			case row.Differs[i]:
 				mark, color = "~", yellow
-			case !r.Present[i]:
+				v, _ := f.Lookup(row.Key)
+				vals = append(vals, f.Name+"="+p.value(v))
+			case !row.Present[i]:
 				mark, color = "-", red
 			}
 			b.WriteString("  " + p.paint(color, mark))
-			if i < len(files)-1 {
+			if i < len(r.files)-1 {
 				b.WriteString(strings.Repeat(" ", utf8.RuneCountInString(f.Name)-1))
 			}
 		}
 		fmt.Fprintln(p.w, b.String())
-	}
-
-	var details []string
-	for _, r := range bad {
-		var vals []string
-		for i, f := range files {
-			if r.Differs[i] {
-				v, _ := f.Lookup(r.Key)
-				vals = append(vals, f.Name+"="+p.value(v))
-			}
-		}
 		if len(vals) > 0 {
-			ref, _ := files[0].Lookup(r.Key)
-			details = append(details, fmt.Sprintf("%s %s  %s=%s %s", p.paint(yellow, "~"),
-				r.Key, files[0].Name, p.value(ref), strings.Join(vals, " ")))
+			v, _ := ref.Lookup(row.Key)
+			msg := ref.Name + "=" + p.value(v) + " " + strings.Join(vals, " ")
+			details = append(details, entry{'~', yellow, row.Key, msg})
 		}
 	}
-	if len(details) > 0 {
-		fmt.Fprintln(p.w)
-		for _, d := range details {
-			fmt.Fprintln(p.w, d)
+	for _, es := range [][]entry{details, issueEntries(r.issues)} {
+		if len(es) > 0 {
+			fmt.Fprintln(p.w)
+			p.entries(es)
 		}
 	}
-	fmt.Fprintf(p.w, "\n%d of %d keys differ across %d files\n", len(bad), len(rows), len(files))
+	fmt.Fprintf(p.w, "\n%d of %d keys differ across %d files\n", len(bad), len(r.rows), len(r.files))
 }
 
-func (p *printer) line(sym byte, color string, width int, key, msg string) {
-	head := fmt.Sprintf("%c %-*s", sym, width, key)
-	fmt.Fprintf(p.w, "%s  %s\n", p.paint(color, head), msg)
+func issueEntries(issues []diff.Issue) []entry {
+	var es []entry
+	for _, is := range issues {
+		var problem string
+		switch is.Kind {
+		case diff.BadName:
+			problem = "not UPPER_SNAKE_CASE"
+		case diff.Duplicate:
+			problem = "duplicate"
+		case diff.Empty:
+			problem = "empty"
+		}
+		es = append(es, entry{'!', magenta, is.Key, fmt.Sprintf("%s in %s (%s)", problem, is.File, lineList(is.Lines))})
+	}
+	return es
+}
+
+func lineList(lines []int) string {
+	if len(lines) == 1 {
+		return "line " + strconv.Itoa(lines[0])
+	}
+	s := make([]string, len(lines))
+	for i, n := range lines {
+		s[i] = strconv.Itoa(n)
+	}
+	return "lines " + strings.Join(s, ", ")
+}
+
+// entries prints es with the keys aligned.
+func (p *printer) entries(es []entry) {
+	width := 0
+	for _, e := range es {
+		width = max(width, len(e.key))
+	}
+	for _, e := range es {
+		head := fmt.Sprintf("%c %-*s", e.sym, width, e.key)
+		fmt.Fprintf(p.w, "%s  %s\n", p.paint(e.color, head), e.msg)
+	}
 }
 
 // value formats a value for display: quoted in full with --show-values,

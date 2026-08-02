@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/dan2756/envdiff/internal/diff"
@@ -32,6 +33,8 @@ Flags:
       --only-missing         ignore extra keys; only report missing ones
       --strict               also flag duplicate keys, empty values and keys
                              that aren't UPPER_SNAKE_CASE
+      --expand               expand ${VAR} and $VAR references in values,
+                             from earlier keys in the same file or the environment
       --json                 print a JSON report
   -q, --quiet                print nothing; only set the exit status
   -h, --help                 show this help
@@ -49,6 +52,7 @@ type config struct {
 	showValues     bool
 	onlyMissing    bool
 	strict         bool
+	expand         bool
 	ignore         listFlag
 	ignorePrefixes listFlag
 	json           bool
@@ -78,6 +82,7 @@ func parseArgs(args []string) (*config, error) {
 	fs.BoolVar(&c.showValues, "show-values", false, "")
 	fs.BoolVar(&c.onlyMissing, "only-missing", false, "")
 	fs.BoolVar(&c.strict, "strict", false, "")
+	fs.BoolVar(&c.expand, "expand", false, "")
 	fs.Var(&c.ignore, "ignore", "")
 	fs.Var(&c.ignorePrefixes, "ignore-prefix", "")
 	fs.BoolVar(&c.json, "json", false, "")
@@ -118,7 +123,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return usageError(stderr, fmt.Sprintf("need at least two files to compare, got %d", len(cfg.files)))
 	}
 
-	files, ok := loadFiles(cfg.files, stderr)
+	parseOpts := dotenv.Options{}
+	if cfg.expand {
+		parseOpts = dotenv.Options{Expand: true, LookupEnv: os.LookupEnv}
+	}
+	files, ok := loadFiles(cfg.files, parseOpts, stderr)
 	if !ok {
 		return exitError
 	}
@@ -142,11 +151,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 // loadFiles parses every path, reporting all failures rather than
 // stopping at the first one.
-func loadFiles(paths []string, stderr io.Writer) ([]*dotenv.File, bool) {
+func loadFiles(paths []string, opts dotenv.Options, stderr io.Writer) ([]*dotenv.File, bool) {
 	files := make([]*dotenv.File, 0, len(paths))
 	ok := true
 	for _, path := range paths {
-		f, err := dotenv.ReadFile(path)
+		f, err := opts.ReadFile(path)
 		if err != nil {
 			fmt.Fprintf(stderr, "envdiff: %v\n", err)
 			ok = false

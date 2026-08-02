@@ -169,3 +169,93 @@ func TestLookupLastWins(t *testing.T) {
 		t.Errorf("Keys() = %v, want %v", got, want)
 	}
 }
+
+func TestParseExpand(t *testing.T) {
+	env := map[string]string{"HOME": "/home/me", "EMPTY": ""}
+	opts := Options{Expand: true, LookupEnv: func(k string) (string, bool) {
+		v, ok := env[k]
+		return v, ok
+	}}
+	tests := []struct {
+		name string
+		in   string
+		want string // value of the last entry
+	}{
+		{"braces", "A=x\nB=${A}y", "xy"},
+		{"bare", "A=x\nB=$A/y", "x/y"},
+		{"bare stops at non-name char", "A=x\nB=$A-$A.$A", "x-x.x"},
+		{"double quoted", "A=x\nB=\"${A} $A\"", "x x"},
+		{"multiline double quoted", "A=x\nB=\"1\n${A}\n2\"", "1\nx\n2"},
+		{"single quoted untouched", "A=x\nB='${A} $A'", "${A} $A"},
+		{"backtick untouched", "A=x\nB=`$A`", "$A"},
+		{"escaped in double quotes", "A=x\nB=\"\\${A} \\$A\"", "${A} $A"},
+		{"escaped unquoted", "A=x\nB=\\$A", "$A"},
+		{"from environment", "H=${HOME}/x", "/home/me/x"},
+		{"file before environment", "HOME=/srv\nH=$HOME", "/srv"},
+		{"self reference uses environment", "HOME=$HOME/sub", "/home/me/sub"},
+		{"later assignment wins", "A=1\nA=2\nB=$A", "2"},
+		{"defined later is not visible", "B=[$A]\nA=1\nC=$B", "[]"},
+		{"undefined is empty", "B=[${NOPE}]", "[]"},
+		{"default when unset", "B=${NOPE:-fallback}", "fallback"},
+		{"default when empty", "B=${EMPTY:-fallback}", "fallback"},
+		{"dash default ignores empty", "B=[${EMPTY-fallback}]", "[]"},
+		{"dash default when unset", "B=${NOPE-fallback}", "fallback"},
+		{"default may contain spaces", "B=\"${NOPE:-a b}\"", "a b"},
+		{"trailing dollar", "PRICE=5$", "5$"},
+		{"dollar before space", "B=a $ b", "a $ b"},
+		{"dollar before digit", "B=$1", "$1"},
+		{"comment after reference", "A=x\nB=$A # $NOPE", "x"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := opts.Parse("test.env", []byte(tt.in))
+			if err != nil {
+				t.Fatalf("Parse(%q): %v", tt.in, err)
+			}
+			if got := f.Entries[len(f.Entries)-1].Value; got != tt.want {
+				t.Errorf("Parse(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseNoExpandByDefault(t *testing.T) {
+	f, err := Parse("test.env", []byte("A=x\nB=${A}\nC=\"$A\"\nD=\"\\$A\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []kv{{"A", "x"}, {"B", "${A}"}, {"C", "$A"}, {"D", "$A"}}
+	if got := pairs(f); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestParseExpandErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		line int
+		msg  string
+	}{
+		{"unterminated", "A=1\nB=${A", 2, "unterminated ${"},
+		{"unterminated in quotes", "B=\"${A\nmore\"", 1, "unterminated ${"},
+		{"invalid name", "B=${1A}", 1, `invalid variable reference "${1A}"`},
+		{"empty name", "B=${}", 1, `invalid variable reference "${}"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Options{Expand: true}.Parse("test.env", []byte(tt.in))
+			var pe *ParseError
+			if !errors.As(err, &pe) {
+				t.Fatalf("error = %v, want *ParseError", err)
+			}
+			if pe.Line != tt.line || !strings.Contains(pe.Msg, tt.msg) {
+				t.Errorf("got line %d %q, want line %d containing %q", pe.Line, pe.Msg, tt.line, tt.msg)
+			}
+		})
+	}
+	// Without --expand the same input is just a literal value.
+	if _, err := Parse("test.env", []byte("B=${A")); err != nil {
+		t.Errorf("unexpanded parse failed: %v", err)
+	}
+}

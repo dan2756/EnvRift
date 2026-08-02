@@ -70,13 +70,31 @@ func (e *ParseError) Error() string {
 	return fmt.Sprintf("%s:%d: %s", e.File, e.Line, e.Msg)
 }
 
+// Options controls optional parser behavior. The zero value reads values
+// literally.
+type Options struct {
+	// Expand resolves $VAR, ${VAR}, ${VAR:-default} and ${VAR-default} in
+	// unquoted and double-quoted values. Variables are looked up among the
+	// assignments earlier in the file, then with LookupEnv.
+	Expand bool
+	// LookupEnv resolves variables the file doesn't define, typically
+	// os.LookupEnv. Nil means undefined variables expand to "".
+	LookupEnv func(string) (string, bool)
+}
+
+// ReadFile reads and parses the .env file at path with default options.
+func ReadFile(path string) (*File, error) { return Options{}.ReadFile(path) }
+
+// Parse parses data with default options. See Options.Parse.
+func Parse(name string, data []byte) (*File, error) { return Options{}.Parse(name, data) }
+
 // ReadFile reads and parses the .env file at path.
-func ReadFile(path string) (*File, error) {
+func (o Options) ReadFile(path string) (*File, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return Parse(path, data)
+	return o.Parse(path, data)
 }
 
 // Parse parses data as the contents of a .env file. name is used in
@@ -84,13 +102,13 @@ func ReadFile(path string) (*File, error) {
 //
 // Supported syntax: KEY=value lines with optional "export " prefix and
 // whitespace around '=', full-line and inline comments, single-quoted
-// (literal), double-quoted (with \n, \t, \" and \\ escapes) and
+// (literal), double-quoted (with \n, \t, \", \\ and \$ escapes) and
 // backtick-quoted values. Quoted values may span several lines. CRLF line
 // endings and a leading UTF-8 byte order mark are accepted.
-func Parse(name string, data []byte) (*File, error) {
+func (o Options) Parse(name string, data []byte) (*File, error) {
 	src := strings.TrimPrefix(string(data), "\uFEFF")
 	src = strings.ReplaceAll(src, "\r\n", "\n")
-	p := &parser{name: name, src: src, line: 1, file: newFile(name)}
+	p := &parser{name: name, src: src, line: 1, opts: o, file: newFile(name)}
 	if err := p.parse(); err != nil {
 		return nil, err
 	}
@@ -102,6 +120,7 @@ type parser struct {
 	src  string
 	pos  int
 	line int
+	opts Options
 	file *File
 }
 
@@ -176,12 +195,12 @@ func (p *parser) value(spaced bool) (string, error) {
 			return "", nil
 		}
 	}
-	return p.unquoted(), nil
+	return p.unquoted()
 }
 
 // unquoted reads the rest of the line. A '#' preceded by whitespace
 // starts a comment; surrounding whitespace is trimmed.
-func (p *parser) unquoted() string {
+func (p *parser) unquoted() (string, error) {
 	end := strings.IndexByte(p.src[p.pos:], '\n')
 	if end < 0 {
 		end = len(p.src) - p.pos
@@ -194,7 +213,11 @@ func (p *parser) unquoted() string {
 			break
 		}
 	}
-	return strings.TrimRight(s, " \t")
+	s = strings.TrimRight(s, " \t")
+	if p.opts.Expand {
+		return p.expandAll(s)
+	}
+	return s, nil
 }
 
 // quoted reads a value delimited by q, which may span lines. Escape
@@ -215,6 +238,13 @@ func (p *parser) quoted(q byte, escapes bool) (string, error) {
 			return b.String(), p.afterQuote(q)
 		case c == '\\' && escapes:
 			p.escape(&b)
+		case c == '$' && escapes && p.opts.Expand:
+			v, n, err := p.expand(p.src[p.pos:])
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(v)
+			p.pos += n
 		case c == '\n':
 			b.WriteByte(c)
 			p.pos++
@@ -242,7 +272,7 @@ func (p *parser) escape(b *strings.Builder) {
 		b.WriteByte('\r')
 	case 't':
 		b.WriteByte('\t')
-	case '"', '\\':
+	case '"', '\\', '$':
 		b.WriteByte(c)
 	default:
 		// Unknown escapes are kept as written, as most loaders do.
@@ -262,6 +292,78 @@ func (p *parser) afterQuote(q byte) error {
 		return nil
 	}
 	return p.errorf("unexpected %q after closing %c", p.restOfLine(), q)
+}
+
+// expandAll expands every variable reference in an unquoted value.
+// "\$" stands for a literal dollar sign.
+func (p *parser) expandAll(s string) (string, error) {
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		switch {
+		case s[i] == '\\' && i+1 < len(s) && s[i+1] == '$':
+			b.WriteByte('$')
+			i += 2
+		case s[i] == '$':
+			v, n, err := p.expand(s[i:])
+			if err != nil {
+				return "", err
+			}
+			b.WriteString(v)
+			i += n
+		default:
+			b.WriteByte(s[i])
+			i++
+		}
+	}
+	return b.String(), nil
+}
+
+// expand resolves the variable reference at the start of s, which begins
+// with '$', returning its value and the number of bytes it spans. A '$'
+// that doesn't start a reference stands for itself.
+func (p *parser) expand(s string) (string, int, error) {
+	if !strings.HasPrefix(s, "${") {
+		n := 1
+		for n < len(s) && isVarChar(s[n], n == 1) {
+			n++
+		}
+		if n == 1 {
+			return "$", 1, nil
+		}
+		v, _ := p.lookup(s[1:n])
+		return v, n, nil
+	}
+
+	end := strings.IndexAny(s, "}\n")
+	if end < 0 || s[end] != '}' {
+		return "", 0, p.errorf("unterminated ${ in value")
+	}
+	name, op, def := s[2:end], "", ""
+	if i := strings.Index(name, ":-"); i >= 0 {
+		name, op, def = name[:i], ":-", name[i+2:]
+	} else if i := strings.IndexByte(name, '-'); i >= 0 {
+		name, op, def = name[:i], "-", name[i+1:]
+	}
+	if !isVarName(name) {
+		return "", 0, p.errorf("invalid variable reference %q", s[:end+1])
+	}
+	v, ok := p.lookup(name)
+	if (op == ":-" && v == "") || (op == "-" && !ok) {
+		v = def
+	}
+	return v, end + 1, nil
+}
+
+// lookup finds a variable among the assignments so far, then in the
+// environment.
+func (p *parser) lookup(name string) (string, bool) {
+	if v, ok := p.file.Lookup(name); ok {
+		return v, true
+	}
+	if p.opts.LookupEnv != nil {
+		return p.opts.LookupEnv(name)
+	}
+	return "", false
 }
 
 func (p *parser) hasExport() bool {
@@ -336,3 +438,21 @@ func isKeyChar(c byte) bool {
 }
 
 func isDigit(c byte) bool { return '0' <= c && c <= '9' }
+
+func isVarName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if !isVarChar(s[i], i == 0) {
+			return false
+		}
+	}
+	return true
+}
+
+// isVarChar reports whether c can appear in a $VAR reference; digits are
+// not allowed first.
+func isVarChar(c byte, first bool) bool {
+	return c == '_' || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || (!first && isDigit(c))
+}

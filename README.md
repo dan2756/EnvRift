@@ -152,6 +152,25 @@ spans several lines
 CRLF line endings and a UTF-8 byte order mark are fine. Syntax errors are
 reported as `file:line: message`.
 
+### Variable expansion
+
+By default values are compared exactly as written, so `${HOST}` is just text.
+With `--expand`, references in unquoted and double-quoted values are resolved
+first:
+
+```sh
+HOST=db.internal
+DATABASE_URL=postgres://${HOST}:${PORT:-5432}/app
+CACHE_DIR=$HOME/.cache
+LITERAL="costs \$5"         # \$ is a literal dollar sign
+SINGLE='${NOT_EXPANDED}'    # single quotes and backticks are never expanded
+```
+
+`$VAR`, `${VAR}`, `${VAR:-default}` (unset or empty) and `${VAR-default}`
+(unset) are supported. A variable is looked up among the keys defined earlier
+in the same file, then in the process environment; anything else expands to an
+empty string.
+
 ## License
 
 MIT

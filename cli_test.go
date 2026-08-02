@@ -285,6 +285,24 @@ func TestRunStrict(t *testing.T) {
 	}
 }
 
+func TestRunExpand(t *testing.T) {
+	setup(t, map[string]string{
+		"a.env": "HOST=db\nURL=postgres://${HOST}:${PORT:-5432}/app\nHOME_DIR=$ENVDIFF_TEST_HOME\n",
+		"b.env": "HOST=db\nURL=postgres://db:5432/app\nHOME_DIR=/home/test\n",
+		"c.env": "URL=${HOST\n",
+	})
+	t.Setenv("ENVDIFF_TEST_HOME", "/home/test")
+	if code, out, _ := runCLI("--values", "a.env", "b.env"); code != 1 {
+		t.Errorf("without --expand: exit %d, want 1\n%s", code, out)
+	}
+	if code, out, errOut := runCLI("--values", "--expand", "a.env", "b.env"); code != 0 {
+		t.Errorf("with --expand: exit %d, want 0\n%s%s", code, out, errOut)
+	}
+	if code, _, errOut := runCLI("--expand", "a.env", "c.env"); code != 2 || !strings.Contains(errOut, "c.env:1: unterminated ${") {
+		t.Errorf("bad reference: exit %d, stderr %q", code, errOut)
+	}
+}
+
 func TestMask(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"", ""},

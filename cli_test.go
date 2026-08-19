@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -300,6 +301,52 @@ func TestRunExpand(t *testing.T) {
 	}
 	if code, _, errOut := runCLI("--expand", "a.env", "c.env"); code != 2 || !strings.Contains(errOut, "c.env:1: unterminated ${") {
 		t.Errorf("bad reference: exit %d, stderr %q", code, errOut)
+	}
+}
+
+func TestParseArgsFlagsAnywhere(t *testing.T) {
+	tests := []struct {
+		args   []string
+		files  []string
+		values bool
+	}{
+		{[]string{"--values", "a", "b"}, []string{"a", "b"}, true},
+		{[]string{"a", "b", "--values"}, []string{"a", "b"}, true},
+		{[]string{"a", "--values", "b", "-q"}, []string{"a", "b"}, true},
+		{[]string{"a", "--ignore", "X,Y", "b", "--ignore=Z"}, []string{"a", "b"}, false},
+		{[]string{"--values", "--", "a", "--weird-name"}, []string{"a", "--weird-name"}, true},
+		{[]string{"a", "--", "-b", "--values"}, []string{"a", "-b", "--values"}, false},
+	}
+	for _, tt := range tests {
+		c, err := parseArgs(tt.args)
+		if err != nil {
+			t.Errorf("parseArgs(%q): %v", tt.args, err)
+			continue
+		}
+		if !reflect.DeepEqual(c.files, tt.files) {
+			t.Errorf("parseArgs(%q) files = %q, want %q", tt.args, c.files, tt.files)
+		}
+		if c.values != tt.values {
+			t.Errorf("parseArgs(%q) values = %v, want %v", tt.args, c.values, tt.values)
+		}
+	}
+
+	c, err := parseArgs([]string{"a", "--ignore", "X,Y", "b", "--ignore=Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"X", "Y", "Z"}; !reflect.DeepEqual([]string(c.ignore), want) {
+		t.Errorf("ignore = %q, want %q", c.ignore, want)
+	}
+}
+
+func TestRunFlagsAfterFiles(t *testing.T) {
+	setup(t, map[string]string{"a.env": "A=1\n", "b.env": "A=2\n"})
+	if code, out, errOut := runCLI("a.env", "b.env", "--values"); code != 1 || !strings.Contains(out, "~ A") {
+		t.Errorf("exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if code, out, _ := runCLI("a.env", "-q", "b.env", "--values"); code != 1 || out != "" {
+		t.Errorf("exit %d, stdout %q", code, out)
 	}
 }
 

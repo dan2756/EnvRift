@@ -15,8 +15,12 @@ go install github.com/dan2756/envdiff@latest
 ## Usage
 
 ```sh
+envdiff [flags] REFERENCE OTHER [OTHER...]
 envdiff .env .env.example
 ```
+
+Flags can go before or after the file names; use `--` if a file name starts
+with a dash.
 
 ```
 - REDIS_URL     missing in .env.example

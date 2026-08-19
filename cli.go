@@ -89,10 +89,25 @@ func parseArgs(args []string) (*config, error) {
 	fs.BoolVar(&c.quiet, "q", false, "")
 	fs.BoolVar(&c.quiet, "quiet", false, "")
 	fs.BoolVar(&c.version, "version", false, "")
-	if err := fs.Parse(args); err != nil {
-		return nil, err
+
+	// The flag package stops at the first non-flag argument, but
+	// "envdiff .env .env.example --values" is a natural thing to type, so
+	// keep parsing after each file. Everything after "--" is a file.
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		rest := fs.Args()
+		if len(rest) == 0 {
+			break
+		}
+		if n := len(args) - len(rest); n > 0 && args[n-1] == "--" {
+			c.files = append(c.files, rest...)
+			break
+		}
+		c.files = append(c.files, rest[0])
+		args = rest[1:]
 	}
-	c.files = fs.Args()
 	if c.showValues {
 		c.values = true
 	}

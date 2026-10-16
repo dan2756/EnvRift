@@ -59,7 +59,9 @@ func (f *File) Lookup(key string) (string, bool) {
 	return f.Entries[i].Value, true
 }
 
-// ParseError describes malformed input at a specific line.
+// ParseError describes malformed input at a specific line. Msg never
+// quotes the input: a malformed line is often part of a value, such as an
+// unquoted multi-line private key, and errors end up in CI logs.
 type ParseError struct {
 	File string
 	Line int
@@ -158,14 +160,14 @@ func (p *parser) assignment() error {
 	}
 	key := p.src[start:p.pos]
 	if key == "" {
-		return p.errorf("expected KEY=value, got %q", p.restOfLine())
+		return p.errorf("expected KEY=value")
 	}
 	if !validKey(key) {
-		return p.errorf("invalid key %q", key)
+		return p.errorf("invalid key: must start with a letter or '_'")
 	}
 	p.skipBlanks()
 	if p.eof() || p.src[p.pos] != '=' {
-		return p.errorf("expected '=' after key %q", key)
+		return p.errorf("expected '=' after key")
 	}
 	p.pos++
 	spaced := p.skipBlanks()
@@ -291,7 +293,7 @@ func (p *parser) afterQuote(q byte) error {
 		p.skipLine()
 		return nil
 	}
-	return p.errorf("unexpected %q after closing %c", p.restOfLine(), q)
+	return p.errorf("unexpected text after closing %c", q)
 }
 
 // expandAll expands every variable reference in an unquoted value.
@@ -345,7 +347,7 @@ func (p *parser) expand(s string) (string, int, error) {
 		name, op, def = name[:i], "-", name[i+1:]
 	}
 	if !isVarName(name) {
-		return "", 0, p.errorf("invalid variable reference %q", s[:end+1])
+		return "", 0, p.errorf("invalid variable reference")
 	}
 	v, ok := p.lookup(name)
 	if (op == ":-" && v == "") || (op == "-" && !ok) {
@@ -386,18 +388,6 @@ func (p *parser) skipLine() {
 	} else {
 		p.pos = len(p.src)
 	}
-}
-
-func (p *parser) restOfLine() string {
-	s := p.src[p.pos:]
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
-	}
-	s = strings.TrimSpace(s)
-	if len(s) > 40 {
-		s = s[:40] + "..."
-	}
-	return s
 }
 
 func (p *parser) eof() bool { return p.pos >= len(p.src) }

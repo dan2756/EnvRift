@@ -95,20 +95,20 @@ func TestParseErrors(t *testing.T) {
 		line int
 		msg  string
 	}{
-		{"missing equals", "FOO", 1, `expected '=' after key "FOO"`},
-		{"missing equals later", "A=1\n\nB", 3, `expected '=' after key "B"`},
-		{"export without assignment", "export FOO", 1, `expected '=' after key "FOO"`},
-		{"space in key", "MY KEY=1", 1, `expected '=' after key "MY"`},
-		{"key starting with digit", "1FOO=bar", 1, `invalid key "1FOO"`},
+		{"missing equals", "FOO", 1, "expected '=' after key"},
+		{"missing equals later", "A=1\n\nB", 3, "expected '=' after key"},
+		{"export without assignment", "export FOO", 1, "expected '=' after key"},
+		{"space in key", "MY KEY=1", 1, "expected '=' after key"},
+		{"key starting with digit", "1FOO=bar", 1, "invalid key: must start with a letter or '_'"},
 		{"no key", "=bar", 1, "expected KEY=value"},
 		{"quoted key", `"FOO"=bar`, 1, "expected KEY=value"},
 		{"unterminated double", `FOO="bar`, 1, "unterminated double-quoted value"},
 		{"unterminated single", "A=1\nFOO='bar", 2, "unterminated single-quoted value"},
 		{"unterminated backtick", "FOO=`bar", 1, "unterminated backtick-quoted value"},
-		{"text after quote", `FOO="bar" baz`, 1, `unexpected "baz" after closing "`},
+		{"text after quote", `FOO="bar" baz`, 1, `unexpected text after closing "`},
 		{"unterminated multiline", "A=1\nB=\"start\nmore\nC=3\n", 2, "unterminated double-quoted value"},
-		{"error after multiline value", "A=\"x\ny\nz\"\nBAD LINE\n", 4, `expected '=' after key "BAD"`},
-		{"crlf error line", "A=1\r\nB=2\r\noops\r\n", 3, `expected '=' after key "oops"`},
+		{"error after multiline value", "A=\"x\ny\nz\"\nBAD LINE\n", 4, "expected '=' after key"},
+		{"crlf error line", "A=1\r\nB=2\r\noops\r\n", 3, "expected '=' after key"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -127,6 +127,33 @@ func TestParseErrors(t *testing.T) {
 				t.Errorf("Error() = %q, want prefix %q", err.Error(), prefix)
 			}
 		})
+	}
+}
+
+// A malformed line is often part of a value, such as an unquoted
+// multi-line private key, so errors must not quote the input.
+func TestParseErrorsDontQuoteInput(t *testing.T) {
+	tests := []struct {
+		in     string
+		expand bool
+		secret string
+	}{
+		{"PRIVATE_KEY=-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA3Tz2mr7SZiAMfQyuvBjM4Oi/x\n-----END RSA PRIVATE KEY-----\n", false, "MIIEpAIBAAKC"},
+		{"PRIVATE_KEY=-----BEGIN RSA PRIVATE KEY-----\n3Tz2mr7SZiAMfQyuvBjM4Oi\n", false, "3Tz2mr7SZ"},
+		{"PRIVATE_KEY=-----BEGIN RSA PRIVATE KEY-----\n+Tz2mr7SZiAMfQyuvBjM4Oi\n", false, "Tz2mr7SZ"},
+		{`"API_KEY"=sk_live_51Habcdefghijklmnop`, false, "sk_live"},
+		{`PASSWORD="hunter2"supersecret`, false, "supersecret"},
+		{"PASSWORD=pa${$s:-w0rd}", true, "w0rd"},
+	}
+	for _, tt := range tests {
+		_, err := Options{Expand: tt.expand}.Parse("test.env", []byte(tt.in))
+		if err == nil {
+			t.Errorf("Parse(%q) succeeded, want an error", tt.in)
+			continue
+		}
+		if strings.Contains(err.Error(), tt.secret) {
+			t.Errorf("Parse(%q) error %q quotes the input", tt.in, err)
+		}
 	}
 }
 
@@ -239,8 +266,8 @@ func TestParseExpandErrors(t *testing.T) {
 	}{
 		{"unterminated", "A=1\nB=${A", 2, "unterminated ${"},
 		{"unterminated in quotes", "B=\"${A\nmore\"", 1, "unterminated ${"},
-		{"invalid name", "B=${1A}", 1, `invalid variable reference "${1A}"`},
-		{"empty name", "B=${}", 1, `invalid variable reference "${}"`},
+		{"invalid name", "B=${1A}", 1, "invalid variable reference"},
+		{"empty name", "B=${}", 1, "invalid variable reference"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

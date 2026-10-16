@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // setup writes files into a fresh temp dir and makes it the working
@@ -358,10 +359,91 @@ func TestMask(t *testing.T) {
 		{"elevenchars", "<redacted>"},
 		{"twelve-chars", "tw****rs"},
 		{"postgres://user:pw@db:5432/app", "po****pp"},
+		{"€uro-secret-token-€", "€u****-€"},
+		{"ключ-доступа", "кл****па"},
+		{"секретныйкл", "<redacted>"}, // 11 runes but 22 bytes
+		{"pässwört", "<redacted>"},
 	}
 	for _, tt := range tests {
-		if got := mask(tt.in); got != tt.want {
+		got := mask(tt.in)
+		if got != tt.want {
 			t.Errorf("mask(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+		if !utf8.ValidString(got) {
+			t.Errorf("mask(%q) = %q is not valid UTF-8", tt.in, got)
+		}
+	}
+}
+
+func TestRunEscapesMaskedValues(t *testing.T) {
+	setup(t, map[string]string{
+		"a.env": `KEY="-----BEGIN KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END KEY-----\n"` + "\nT=\x1b]0;x\x07abcdefghijklmnop\x1b[2J\n",
+		"b.env": `KEY="-----BEGIN KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASD\n-----END KEY-----\n"` + "\nT=zzzzzzzzzzzzzzzzzzzz\n",
+		"c.env": "KEY=x\nT=zzzzzzzzzzzzzzzzzzzz\n",
+	})
+	_, out, _ := runCLI("--values", "a.env", "b.env")
+	want := "" +
+		`~ KEY  differs: a.env=--****-\n b.env=--****-\n` + "\n" +
+		`~ T    differs: a.env=\x1b]****2J b.env=zz****zz` + "\n"
+	if out != want {
+		t.Errorf("output:\n%q\nwant:\n%q", out, want)
+	}
+
+	_, out, _ = runCLI("--values", "a.env", "b.env", "c.env")
+	if want := `~ KEY  a.env=--****-\n b.env=--****-\n c.env=<redacted>` + "\n"; !strings.Contains(out, want) {
+		t.Errorf("matrix output:\n%s\nwant it to contain %q", out, want)
+	}
+	if strings.ContainsAny(out, "\x1b\x07") {
+		t.Errorf("matrix output has raw control characters: %q", out)
+	}
+}
+
+func TestRunMatrixWideNames(t *testing.T) {
+	setup(t, map[string]string{
+		".env.example":       "A=1\nB=1\n",
+		"本番.env":             "A=1\n",
+		"ステージング.env":         "B=1\n",
+		"cafe\u0301.env":     "A=1\n", // decomposed (NFD), as macOS tools often write it
+		"\u1112\u1161\u11ab": "B=1\n", // decomposed Hangul
+	})
+	tests := []struct {
+		files []string
+		want  string
+	}{
+		{[]string{".env.example", "本番.env", "ステージング.env"}, "" +
+			"KEY  .env.example  本番.env  ステージング.env\n" +
+			"A    ✓             ✓         -\n" +
+			"B    ✓             -         ✓\n"},
+		{[]string{".env.example", "cafe\u0301.env", "\u1112\u1161\u11ab", ".env.example"}, "" +
+			"KEY  .env.example  cafe\u0301.env  \u1112\u1161\u11ab  .env.example\n" +
+			"A    ✓             ✓         -   ✓\n" +
+			"B    ✓             -         ✓   ✓\n"},
+	}
+	for _, tt := range tests {
+		_, out, _ := runCLI(tt.files...)
+		if !strings.HasPrefix(out, tt.want) {
+			t.Errorf("envdiff %s:\n%s\nwant:\n%s", strings.Join(tt.files, " "), out, tt.want)
+		}
+	}
+}
+
+func TestDisplayWidth(t *testing.T) {
+	tests := []struct {
+		in   string
+		want int
+	}{
+		{".env.production", 15},
+		{"本番.env", 8},
+		{"ステージング.env", 16},
+		{"cafe\u0301.env", 8},
+		{"\u1112\u1161\u11ab", 2},
+		{"ｱ", 1}, // halfwidth katakana
+		{"ＡＢ", 4},
+		{"\u200b", 0},
+	}
+	for _, tt := range tests {
+		if got := displayWidth(tt.in); got != tt.want {
+			t.Errorf("displayWidth(%q) = %d, want %d", tt.in, got, tt.want)
 		}
 	}
 }

@@ -6,7 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"unicode/utf8"
+	"unicode"
 
 	"github.com/dan2756/envdiff/internal/diff"
 )
@@ -133,7 +133,7 @@ func (p *printer) matrix(r *report) {
 			}
 			b.WriteString("  " + p.paint(color, mark))
 			if i < len(r.files)-1 {
-				b.WriteString(strings.Repeat(" ", utf8.RuneCountInString(f.Name)-1))
+				b.WriteString(strings.Repeat(" ", max(displayWidth(f.Name)-1, 0)))
 			}
 		}
 		fmt.Fprintln(p.w, b.String())
@@ -193,7 +193,8 @@ func (p *printer) entries(es []entry) {
 }
 
 // value formats a value for display: quoted in full with --show-values,
-// masked otherwise.
+// masked otherwise. The characters a mask keeps are escaped the same way,
+// so a trailing newline or a terminal escape can't break the line.
 func (p *printer) value(v string) string {
 	if p.showValues {
 		return strconv.Quote(v)
@@ -201,17 +202,64 @@ func (p *printer) value(v string) string {
 	if v == "" {
 		return `""`
 	}
-	return mask(v)
+	q := strconv.Quote(mask(v))
+	return q[1 : len(q)-1]
 }
 
 // mask hides most of a value. Long values keep two characters at each end
 // so they can still be told apart; short ones are redacted entirely.
+// Lengths are counted in runes so multibyte characters are never split.
 func mask(v string) string {
+	r := []rune(v)
 	switch {
-	case v == "":
+	case len(r) == 0:
 		return ""
-	case len(v) < 12:
+	case len(r) < 12:
 		return "<redacted>"
 	}
-	return v[:2] + "****" + v[len(v)-2:]
+	return string(r[:2]) + "****" + string(r[len(r)-2:])
+}
+
+// displayWidth returns the number of terminal columns s takes up:
+// combining marks and other zero-width characters take none, East Asian
+// wide and fullwidth characters take two.
+func displayWidth(s string) int {
+	n := 0
+	for _, r := range s {
+		switch {
+		case unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf, combiningJamo):
+		case unicode.Is(wide, r):
+			n += 2
+		default:
+			n++
+		}
+	}
+	return n
+}
+
+// combiningJamo are the medial vowels and final consonants of
+// decomposed (NFD) Hangul, which combine with the preceding consonant.
+var combiningJamo = &unicode.RangeTable{R16: []unicode.Range16{{Lo: 0x1160, Hi: 0x11ff, Stride: 1}}}
+
+// wide holds the East Asian wide and fullwidth ranges, as in Markus Kuhn's
+// wcwidth.
+var wide = &unicode.RangeTable{
+	R16: []unicode.Range16{
+		{Lo: 0x1100, Hi: 0x115f, Stride: 1}, // Hangul Jamo initial consonants
+		{Lo: 0x2329, Hi: 0x232a, Stride: 1}, // angle brackets
+		{Lo: 0x2e80, Hi: 0x303e, Stride: 1}, // CJK radicals, symbols and punctuation
+		{Lo: 0x3040, Hi: 0xa4cf, Stride: 1}, // kana, CJK ideographs, Yi
+		{Lo: 0xac00, Hi: 0xd7a3, Stride: 1}, // Hangul syllables
+		{Lo: 0xf900, Hi: 0xfaff, Stride: 1}, // CJK compatibility ideographs
+		{Lo: 0xfe10, Hi: 0xfe19, Stride: 1}, // vertical forms
+		{Lo: 0xfe30, Hi: 0xfe6f, Stride: 1}, // CJK compatibility forms
+		{Lo: 0xff00, Hi: 0xff60, Stride: 1}, // fullwidth forms
+		{Lo: 0xffe0, Hi: 0xffe6, Stride: 1},
+	},
+	R32: []unicode.Range32{
+		{Lo: 0x1f300, Hi: 0x1f64f, Stride: 1}, // pictographs and emoticons
+		{Lo: 0x1f900, Hi: 0x1f9ff, Stride: 1},
+		{Lo: 0x20000, Hi: 0x2fffd, Stride: 1}, // CJK extensions
+		{Lo: 0x30000, Hi: 0x3fffd, Stride: 1},
+	},
 }

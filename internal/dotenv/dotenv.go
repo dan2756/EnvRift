@@ -106,11 +106,14 @@ func (o Options) ReadFile(path string) (*File, error) {
 // Supported syntax: KEY=value lines with optional "export " prefix and
 // whitespace around '=', full-line and inline comments, single-quoted
 // (literal), double-quoted (with \n, \t, \", \\ and \$ escapes) and
-// backtick-quoted values. Quoted values may span several lines. CRLF line
-// endings and a leading UTF-8 byte order mark are accepted.
+// backtick-quoted values. Quoted values may span several lines. CR and CRLF
+// line endings and a leading UTF-8 byte order mark are accepted.
 func (o Options) Parse(name string, data []byte) (*File, error) {
 	src := strings.TrimPrefix(string(data), "\uFEFF")
+	// CRLF first, then any remaining CR. Replacing every CR up front would
+	// turn "\r\n" into "\n\n" and shift the line numbers that follow.
 	src = strings.ReplaceAll(src, "\r\n", "\n")
+	src = strings.ReplaceAll(src, "\r", "\n")
 	p := &parser{name: name, src: src, line: 1, opts: o, file: newFile(name)}
 	if err := p.parse(); err != nil {
 		return nil, err

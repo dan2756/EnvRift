@@ -72,6 +72,9 @@ func TestParse(t *testing.T) {
 		{"crlf", "A=1\r\nB=two words\r\n# c\r\nC='q'\r\n", []kv{{"A", "1"}, {"B", "two words"}, {"C", "q"}}},
 		{"crlf inline comment", "A=1 # c\r\nB=2\r\n", []kv{{"A", "1"}, {"B", "2"}}},
 		{"crlf multiline", "A=\"x\r\ny\"\r\n", []kv{{"A", "x\ny"}}},
+		{"cr only", "A=1\rB=2\r", []kv{{"A", "1"}, {"B", "2"}}},
+		{"crlf last line without lf", "A=1\r\nB=2\r", []kv{{"A", "1"}, {"B", "2"}}},
+		{"cr multiline", "A=\"x\ry\"\rB=2", []kv{{"A", "x\ny"}, {"B", "2"}}},
 		{"bom", "\uFEFFA=1\nB=2", []kv{{"A", "1"}, {"B", "2"}}},
 		{"bom and crlf", "\uFEFFexport A=1\r\n", []kv{{"A", "1"}}},
 	}
@@ -109,6 +112,7 @@ func TestParseErrors(t *testing.T) {
 		{"unterminated multiline", "A=1\nB=\"start\nmore\nC=3\n", 2, "unterminated double-quoted value"},
 		{"error after multiline value", "A=\"x\ny\nz\"\nBAD LINE\n", 4, "expected '=' after key"},
 		{"crlf error line", "A=1\r\nB=2\r\noops\r\n", 3, "expected '=' after key"},
+		{"cr error line", "A=1\rB\r", 2, "expected '=' after key"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

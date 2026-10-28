@@ -201,7 +201,7 @@ spans several lines
 -----END KEY-----"
 ```
 
-CRLF line endings and a UTF-8 byte order mark are fine. Syntax errors are
+CR and CRLF line endings and a UTF-8 byte order mark are fine. Syntax errors are
 reported as `file:line: message`. The message never quotes the file, since a
 malformed line is often part of a secret, such as an unquoted multi-line key.
 

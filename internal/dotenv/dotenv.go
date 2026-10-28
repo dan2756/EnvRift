@@ -76,8 +76,9 @@ func (e *ParseError) Error() string {
 // literally.
 type Options struct {
 	// Expand resolves $VAR, ${VAR}, ${VAR:-default} and ${VAR-default} in
-	// unquoted and double-quoted values. Variables are looked up among the
-	// assignments earlier in the file, then with LookupEnv.
+	// unquoted and double-quoted values. The text of a default is expanded
+	// the same way. Variables are looked up among the assignments earlier
+	// in the file, then with LookupEnv.
 	Expand bool
 	// LookupEnv resolves variables the file doesn't define, typically
 	// os.LookupEnv. Nil means undefined variables expand to "".
@@ -336,24 +337,67 @@ func (p *parser) expand(s string) (string, int, error) {
 		return v, n, nil
 	}
 
-	end := strings.IndexAny(s, "}\n")
-	if end < 0 || s[end] != '}' {
-		return "", 0, p.errorf("unterminated ${ in value")
+	// The operator, if any, sits immediately after the name. A ":-" later
+	// on is part of the default (${VAR-a:-b} means the literal "a:-b"),
+	// and a '}' belongs to the default when it closes a nested ${...}.
+	body := s[2:]
+	i := 0
+	for i < len(body) && isVarChar(body[i], i == 0) {
+		i++
 	}
-	name, op, def := s[2:end], "", ""
-	if i := strings.Index(name, ":-"); i >= 0 {
-		name, op, def = name[:i], ":-", name[i+2:]
-	} else if i := strings.IndexByte(name, '-'); i >= 0 {
-		name, op, def = name[:i], "-", name[i+1:]
-	}
-	if !isVarName(name) {
+	if i == 0 {
 		return "", 0, p.errorf("invalid variable reference")
 	}
-	v, ok := p.lookup(name)
-	if (op == ":-" && v == "") || (op == "-" && !ok) {
-		v = def
+	name := body[:i]
+	rest := body[i:]
+	op := ""
+	switch {
+	case strings.HasPrefix(rest, ":-"):
+		op, rest = ":-", rest[2:]
+	case strings.HasPrefix(rest, "-"):
+		op, rest = "-", rest[1:]
 	}
-	return v, end + 1, nil
+	end, ok := closingBrace(rest)
+	if !ok {
+		return "", 0, p.errorf("unterminated ${ in value")
+	}
+	if op == "" && end != 0 {
+		return "", 0, p.errorf("invalid variable reference")
+	}
+	v, found := p.lookup(name)
+	if (op == ":-" && v == "") || (op == "-" && !found) {
+		v, err := p.expandAll(rest[:end])
+		if err != nil {
+			return "", 0, err
+		}
+		return v, 2 + len(name) + len(op) + end + 1, nil
+	}
+	return v, 2 + len(name) + len(op) + end + 1, nil
+}
+
+// closingBrace reports the index of the '}' that ends the text after a
+// ${name} or its operator. Nested ${...} groups are part of that text, so
+// their braces don't end the outer reference. A newline ends nothing: the
+// reference is unterminated. '\$' is a literal dollar and starts no group.
+func closingBrace(s string) (int, bool) {
+	depth := 0
+	for i := 0; i < len(s); i++ {
+		switch {
+		case s[i] == '\\' && i+1 < len(s) && s[i+1] == '$':
+			i++
+		case s[i] == '$' && i+1 < len(s) && s[i+1] == '{':
+			depth++
+			i++
+		case s[i] == '\n':
+			return 0, false
+		case s[i] == '}':
+			if depth == 0 {
+				return i, true
+			}
+			depth--
+		}
+	}
+	return 0, false
 }
 
 // lookup finds a variable among the assignments so far, then in the

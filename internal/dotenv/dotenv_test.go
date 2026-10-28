@@ -232,6 +232,15 @@ func TestParseExpand(t *testing.T) {
 		{"dollar before space", "B=a $ b", "a $ b"},
 		{"dollar before digit", "B=$1", "$1"},
 		{"comment after reference", "A=x\nB=$A # $NOPE", "x"},
+		{"dash default may contain :-", "B=${NOPE-a:-b}", "a:-b"},
+		{"dash default not used when set", "A=set\nB=${A-a:-b}", "set"},
+		{"colon default may contain :-", "B=${NOPE:-a:-b}", "a:-b"},
+		{"nested references in default", "HOST=db.internal\nPORT=5432\nB=${URL:-postgres://${HOST}:${PORT}/app}", "postgres://db.internal:5432/app"},
+		{"nested default of default", "HOST=db\nB=${URL:-postgres://${HOST}:${PORT:-5432}/app}", "postgres://db:5432/app"},
+		{"nested reference in double quotes", "HOST=db\nB=\"x${URL:-postgres://${HOST}/app}y\"", "xpostgres://db/appy"},
+		{"set value skips the default", "URL=keep\nB=x${URL:-postgres://${MISSING}/app}y", "xkeepy"},
+		{"escaped dollar does not nest", `B=${NOPE:-\${HOST}tail}`, "${HOSTtail}"},
+		{"escaped dollar in default", `B=${NOPE:-cost \$5}`, "cost $5"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -220,9 +220,12 @@ SINGLE='${NOT_EXPANDED}'    # single quotes and backticks are never expanded
 ```
 
 `$VAR`, `${VAR}`, `${VAR:-default}` (unset or empty) and `${VAR-default}`
-(unset) are supported. A variable is looked up among the keys defined earlier
-in the same file, then in the process environment; anything else expands to an
-empty string.
+(unset) are supported. A default is expanded the same way, so
+`${URL:-postgres://${HOST}:${PORT:-5432}/app}` resolves the references inside
+it; a `:-` that appears later is part of the default text, not another
+operator. A variable is looked up among the keys defined earlier in the same
+file, then in the process environment; anything else expands to an empty
+string.
 
 ## Environment
 

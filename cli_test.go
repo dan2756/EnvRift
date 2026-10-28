@@ -268,13 +268,24 @@ func TestRunStrict(t *testing.T) {
 	if code, out, _ := runCLI("--strict", "--ignore", "log_level,API_KEY,DEBUG", ".env", ".env.example"); code != 0 {
 		t.Errorf("--strict with everything ignored: exit %d\n%s", code, out)
 	}
-	if code, _, _ := runCLI("--strict", "clean.env", "clean2.env", "clean.env"); code != 0 {
-		t.Errorf("--strict on clean files: exit %d", code)
+	if code, out, _ := runCLI("--strict", "clean.env", "clean2.env", "clean.env"); code != 0 || !strings.Contains(out, "all 3 files match (2 keys)") {
+		t.Errorf("--strict on clean files: exit %d\n%s", code, out)
 	}
-	// A file given twice is only checked once.
-	_, out, _ = runCLI("--strict", ".env", ".env.example", ".env")
+	// A file given twice is only checked once. These three share every key,
+	// so the only failures are --strict findings — which must not be
+	// described as a match. The exit status is 1.
+	code, out, _ = runCLI("--strict", ".env", ".env.example", ".env")
+	if code != 1 {
+		t.Errorf("--strict with matching keys: exit %d\n%s", code, out)
+	}
 	if n := strings.Count(out, "duplicate in .env"); n != 1 {
 		t.Errorf("duplicate reported %d times:\n%s", n, out)
+	}
+	if strings.Contains(out, "match") {
+		t.Errorf("--strict findings reported as a match:\n%s", out)
+	}
+	if !strings.Contains(out, "! API_KEY    empty in .env.example (line 1)") {
+		t.Errorf("--strict matrix output:\n%s", out)
 	}
 
 	_, out, _ = runCLI("--strict", "--json", ".env", ".env.example")

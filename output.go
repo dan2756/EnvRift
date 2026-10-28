@@ -96,11 +96,13 @@ func (p *printer) matrix(r *report) {
 		}
 	}
 	if len(bad) == 0 {
-		fmt.Fprintf(p.w, "all %d files match (%d keys)\n", len(r.files), len(r.rows))
-		if len(r.issues) > 0 {
-			fmt.Fprintln(p.w)
-			p.entries(issueEntries(r.issues))
+		// --strict findings fail the run. Don't claim a match; the two-file
+		// output doesn't either.
+		if len(r.issues) == 0 {
+			fmt.Fprintf(p.w, "all %d files match (%d keys)\n", len(r.files), len(r.rows))
+			return
 		}
+		p.entries(issueEntries(r.issues))
 		return
 	}
 

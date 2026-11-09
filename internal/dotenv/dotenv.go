@@ -214,12 +214,7 @@ func (p *parser) unquoted() (string, error) {
 	}
 	s := p.src[p.pos : p.pos+end]
 	p.pos += end
-	for i := 1; i < len(s); i++ {
-		if s[i] == '#' && isBlank(s[i-1]) {
-			s = s[:i]
-			break
-		}
-	}
+	s = cutInlineComment(s)
 	s = strings.TrimRight(s, " \t")
 	if p.opts.Expand {
 		return p.expandAll(s, false)
@@ -310,6 +305,33 @@ func (p *parser) afterQuote(q byte) error {
 		return nil
 	}
 	return p.errorf("unexpected text after closing %c", q)
+}
+
+// cutInlineComment drops an unquoted inline comment. A '#' starts one when
+// the previous character is whitespace, unless that '#' sits inside ${...}:
+// the braces are part of the value, so "hello # there" in a default is
+// kept. '\$' does not open a group, matching expandAll.
+func cutInlineComment(s string) string {
+	depth := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) && s[i+1] == '$' {
+			i++
+			continue
+		}
+		if s[i] == '$' && i+1 < len(s) && s[i+1] == '{' {
+			depth++
+			i++
+			continue
+		}
+		if s[i] == '}' && depth > 0 {
+			depth--
+			continue
+		}
+		if i > 0 && s[i] == '#' && isBlank(s[i-1]) && depth == 0 {
+			return s[:i]
+		}
+	}
+	return s
 }
 
 // expandAll expands every variable reference in s. quoted means s is

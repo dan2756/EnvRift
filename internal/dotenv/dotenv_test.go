@@ -242,6 +242,15 @@ func TestParseExpand(t *testing.T) {
 		{"nested references in default", "HOST=db.internal\nPORT=5432\nB=${URL:-postgres://${HOST}:${PORT}/app}", "postgres://db.internal:5432/app"},
 		{"nested default of default", "HOST=db\nB=${URL:-postgres://${HOST}:${PORT:-5432}/app}", "postgres://db:5432/app"},
 		{"nested reference in double quotes", "HOST=db\nB=\"x${URL:-postgres://${HOST}/app}y\"", "xpostgres://db/appy"},
+		{"double quoted default newline", "B=\"${NOPE:-a\\nb}\"", "a\nb"},
+		{"double quoted default tab and quote", "B=\"${NOPE:-a\\t\\\"b}\"", "a\t\"b"},
+		{"double quoted default backslash", "B=\"${NOPE:-a\\\\b}\"", "a\\b"},
+		{"escapes around and inside a default", "B=\"pre\\n${NOPE:-a\\nb}post\"", "pre\na\nbpost"},
+		{"backslash then nested reference", "B=1\nA=\"${Z:-x\\\\${B}y}\"", "x\\1y"},
+		{"escaped dollar inside double quoted default", "B=\"${NOPE:-cost \\$5}\"", "cost $5"},
+		{"escaped quote does not end the default", "B=\"${NOPE:-foo\\\"}bar\"", "foo\"bar"},
+		{"unknown escape inside default", "B=\"${NOPE:-a\\qb}\"", "a\\qb"},
+		{"unquoted default keeps backslash", "B=${NOPE:-a\\nb}", "a\\nb"},
 		{"set value skips the default", "URL=keep\nB=x${URL:-postgres://${MISSING}/app}y", "xkeepy"},
 		{"escaped dollar does not nest", `B=${NOPE:-\${HOST}tail}`, "${HOSTtail}"},
 		{"escaped dollar in default", `B=${NOPE:-cost \$5}`, "cost $5"},
@@ -279,6 +288,7 @@ func TestParseExpandErrors(t *testing.T) {
 	}{
 		{"unterminated", "A=1\nB=${A", 2, "unterminated ${"},
 		{"unterminated in quotes", "B=\"${A\nmore\"", 1, "unterminated ${"},
+		{"quote ends the string before the brace", "B=\"${NOPE:-foo\"}bar\"", 1, "unterminated ${"},
 		{"invalid name", "B=${1A}", 1, "invalid variable reference"},
 		{"empty name", "B=${}", 1, "invalid variable reference"},
 	}

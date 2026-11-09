@@ -77,8 +77,9 @@ func (e *ParseError) Error() string {
 type Options struct {
 	// Expand resolves $VAR, ${VAR}, ${VAR:-default} and ${VAR-default} in
 	// unquoted and double-quoted values. The text of a default is expanded
-	// the same way. Variables are looked up among the assignments earlier
-	// in the file, then with LookupEnv.
+	// the same way, and double-quoted escapes are decoded in that text.
+	// Variables are looked up among the assignments earlier in the file,
+	// then with LookupEnv.
 	Expand bool
 	// LookupEnv resolves variables the file doesn't define, typically
 	// os.LookupEnv. Nil means undefined variables expand to "".
@@ -221,7 +222,7 @@ func (p *parser) unquoted() (string, error) {
 	}
 	s = strings.TrimRight(s, " \t")
 	if p.opts.Expand {
-		return p.expandAll(s)
+		return p.expandAll(s, false)
 	}
 	return s, nil
 }
@@ -245,7 +246,7 @@ func (p *parser) quoted(q byte, escapes bool) (string, error) {
 		case c == '\\' && escapes:
 			p.escape(&b)
 		case c == '$' && escapes && p.opts.Expand:
-			v, n, err := p.expand(p.src[p.pos:])
+			v, n, err := p.expand(p.src[p.pos:], true)
 			if err != nil {
 				return "", err
 			}
@@ -271,19 +272,30 @@ func (p *parser) escape(b *strings.Builder) {
 	}
 	c := p.src[p.pos+1]
 	p.pos += 2
+	if decoded, ok := unescapeQuoted(c); ok {
+		b.WriteByte(decoded)
+		return
+	}
+	// Unknown escapes are kept as written, as most loaders do.
+	b.WriteByte('\\')
+	b.WriteByte(c)
+}
+
+// unescapeQuoted decodes one double-quoted escape. n, r and t become the
+// control character; ", \ and $ stand for themselves. Anything else is
+// not an escape.
+func unescapeQuoted(c byte) (byte, bool) {
 	switch c {
 	case 'n':
-		b.WriteByte('\n')
+		return '\n', true
 	case 'r':
-		b.WriteByte('\r')
+		return '\r', true
 	case 't':
-		b.WriteByte('\t')
+		return '\t', true
 	case '"', '\\', '$':
-		b.WriteByte(c)
+		return c, true
 	default:
-		// Unknown escapes are kept as written, as most loaders do.
-		b.WriteByte('\\')
-		b.WriteByte(c)
+		return 0, false
 	}
 }
 
@@ -300,34 +312,46 @@ func (p *parser) afterQuote(q byte) error {
 	return p.errorf("unexpected text after closing %c", q)
 }
 
-// expandAll expands every variable reference in an unquoted value.
-// "\$" stands for a literal dollar sign.
-func (p *parser) expandAll(s string) (string, error) {
+// expandAll expands every variable reference in s. quoted means s is
+// double-quoted source, so the same escapes the rest of a double-quoted
+// value uses are decoded here; an inserted variable's value is not.
+// In unquoted text only "\$" is special, and it stands for a literal
+// dollar sign.
+func (p *parser) expandAll(s string, quoted bool) (string, error) {
 	var b strings.Builder
 	for i := 0; i < len(s); {
-		switch {
-		case s[i] == '\\' && i+1 < len(s) && s[i+1] == '$':
+		if quoted && s[i] == '\\' && i+1 < len(s) {
+			if decoded, ok := unescapeQuoted(s[i+1]); ok {
+				b.WriteByte(decoded)
+				i += 2
+				continue
+			}
+		}
+		if !quoted && s[i] == '\\' && i+1 < len(s) && s[i+1] == '$' {
 			b.WriteByte('$')
 			i += 2
-		case s[i] == '$':
-			v, n, err := p.expand(s[i:])
+			continue
+		}
+		if s[i] == '$' {
+			v, n, err := p.expand(s[i:], quoted)
 			if err != nil {
 				return "", err
 			}
 			b.WriteString(v)
 			i += n
-		default:
-			b.WriteByte(s[i])
-			i++
+			continue
 		}
+		b.WriteByte(s[i])
+		i++
 	}
 	return b.String(), nil
 }
 
 // expand resolves the variable reference at the start of s, which begins
 // with '$', returning its value and the number of bytes it spans. A '$'
-// that doesn't start a reference stands for itself.
-func (p *parser) expand(s string) (string, int, error) {
+// that doesn't start a reference stands for itself. quoted selects
+// double-quote escaping for the text of a default.
+func (p *parser) expand(s string, quoted bool) (string, int, error) {
 	if !strings.HasPrefix(s, "${") {
 		n := 1
 		for n < len(s) && isVarChar(s[n], n == 1) {
@@ -360,7 +384,7 @@ func (p *parser) expand(s string) (string, int, error) {
 	case strings.HasPrefix(rest, "-"):
 		op, rest = "-", rest[1:]
 	}
-	end, ok := closingBrace(rest)
+	end, ok := closingBrace(rest, quoted)
 	if !ok {
 		return "", 0, p.errorf("unterminated ${ in value")
 	}
@@ -369,7 +393,7 @@ func (p *parser) expand(s string) (string, int, error) {
 	}
 	v, found := p.lookup(name)
 	if (op == ":-" && v == "") || (op == "-" && !found) {
-		v, err := p.expandAll(rest[:end])
+		v, err := p.expandAll(rest[:end], quoted)
 		if err != nil {
 			return "", 0, err
 		}
@@ -381,17 +405,28 @@ func (p *parser) expand(s string) (string, int, error) {
 // closingBrace reports the index of the '}' that ends the text after a
 // ${name} or its operator. Nested ${...} groups are part of that text, so
 // their braces don't end the outer reference. A newline ends nothing: the
-// reference is unterminated. '\$' is a literal dollar and starts no group.
-func closingBrace(s string) (int, bool) {
+// reference is unterminated. In unquoted text '\$' is a literal dollar and
+// starts no group. In double quotes the usual escapes are skipped, so
+// '\\' before '$' is a literal backslash and the reference is real, and an
+// unescaped '"' ends the string before the reference is closed.
+func closingBrace(s string, quoted bool) (int, bool) {
 	depth := 0
 	for i := 0; i < len(s); i++ {
-		switch {
-		case s[i] == '\\' && i+1 < len(s) && s[i+1] == '$':
+		if quoted && s[i] == '\\' && i+1 < len(s) {
+			if _, ok := unescapeQuoted(s[i+1]); ok {
+				i++
+				continue
+			}
+		}
+		if !quoted && s[i] == '\\' && i+1 < len(s) && s[i+1] == '$' {
 			i++
+			continue
+		}
+		switch {
 		case s[i] == '$' && i+1 < len(s) && s[i+1] == '{':
 			depth++
 			i++
-		case s[i] == '\n':
+		case s[i] == '\n' || (quoted && s[i] == '"'):
 			return 0, false
 		case s[i] == '}':
 			if depth == 0 {

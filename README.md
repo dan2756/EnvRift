@@ -217,15 +217,18 @@ DATABASE_URL=postgres://${HOST}:${PORT:-5432}/app
 CACHE_DIR=$HOME/.cache
 LITERAL="costs \$5"         # \$ is a literal dollar sign
 SINGLE='${NOT_EXPANDED}'    # single quotes and backticks are never expanded
+QUOTED="${MSG:-a\nb}"        # \n \t \" \\ work inside the default too
 ```
 
 `$VAR`, `${VAR}`, `${VAR:-default}` (unset or empty) and `${VAR-default}`
 (unset) are supported. A default is expanded the same way, so
 `${URL:-postgres://${HOST}:${PORT:-5432}/app}` resolves the references inside
 it; a `:-` that appears later is part of the default text, not another
-operator. A variable is looked up among the keys defined earlier in the same
-file, then in the process environment; anything else expands to an empty
-string.
+operator. Inside double quotes, `\n`, `\t`, `\r`, `\"`, `\\` and `\$` are
+decoded in that text as well, so `"${MSG:-say \"hi\"}"` contains quotes.
+`\\` before `$` is a literal backslash, and the `$` that follows is expanded.
+A variable is looked up among the keys defined earlier in the same file, then
+in the process environment; anything else expands to an empty string.
 
 ## Environment
 

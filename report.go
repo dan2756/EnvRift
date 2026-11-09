@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"path/filepath"
 
 	"github.com/dan2756/envdiff/internal/diff"
 	"github.com/dan2756/envdiff/internal/dotenv"
@@ -27,13 +28,29 @@ func compare(files []*dotenv.File, opts diff.Options, strict bool) *report {
 	if strict {
 		linted := make(map[string]bool)
 		for _, f := range files {
-			if !linted[f.Name] {
-				linted[f.Name] = true
+			// .env, ./.env and a symlink to either are one file. The issue
+			// text keeps the path the user typed for the first of them.
+			if key := fileKey(f.Name); !linted[key] {
+				linted[key] = true
 				rep.issues = append(rep.issues, diff.Lint(f, opts)...)
 			}
 		}
 	}
 	return rep
+}
+
+// fileKey is the path --strict uses to notice that two arguments name the
+// same file. EvalSymlinks follows links; Abs makes ./env and env match
+// even when the link target is absolute.
+func fileKey(name string) string {
+	p := name
+	if resolved, err := filepath.EvalSymlinks(name); err == nil {
+		p = resolved
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		return filepath.Clean(abs)
+	}
+	return filepath.Clean(p)
 }
 
 // match reports whether the run should exit 0.

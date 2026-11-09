@@ -190,6 +190,7 @@ the wild:
 ```sh
 # full-line comments
 PLAIN=value                  # inline comment (needs a space before '#')
+MSG=${MSG:-hello # there}    # '#' inside ${...} is part of the value
 export EXPORTED=1
 SPACED = around the equals
 COLOR=#fff                   # '#' with no space before it is part of the value

@@ -288,6 +288,22 @@ func TestRunStrict(t *testing.T) {
 		t.Errorf("--strict matrix output:\n%s", out)
 	}
 
+	// The same file reached by another spelling, or by a symlink, is one
+	// file. Reporting each path would repeat the same findings.
+	if err := os.Symlink(".env", "link.env"); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ = runCLI("--strict", ".env", "./.env", "link.env", "././.env")
+	if code != 1 {
+		t.Fatalf("aliased paths: exit %d\n%s", code, out)
+	}
+	if n := strings.Count(out, "not UPPER_SNAKE_CASE"); n != 1 {
+		t.Errorf("bad name reported %d times for one file:\n%s", n, out)
+	}
+	if strings.Contains(out, "./.env") || strings.Contains(out, "link.env") {
+		t.Errorf("aliased path reported on its own:\n%s", out)
+	}
+
 	_, out, _ = runCLI("--strict", "--json", ".env", ".env.example")
 	var rep jsonReport
 	if err := json.Unmarshal([]byte(out), &rep); err != nil {

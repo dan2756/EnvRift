@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"os"
 	"path/filepath"
 
 	"github.com/dan2756/envdiff/internal/diff"
@@ -26,22 +27,43 @@ func compare(files []*dotenv.File, opts diff.Options, strict bool) *report {
 		rep.rows = diff.Matrix(files, opts)
 	}
 	if strict {
-		linted := make(map[string]bool)
+		var seen []os.FileInfo
+		fallback := make(map[string]bool)
 		for _, f := range files {
-			// .env, ./.env and a symlink to either are one file. The issue
-			// text keeps the path the user typed for the first of them.
-			if key := fileKey(f.Name); !linted[key] {
-				linted[key] = true
-				rep.issues = append(rep.issues, diff.Lint(f, opts)...)
+			// .env, ./.env, a symlink and a hard link are one file. The
+			// issue text keeps the path the user typed for the first of them.
+			// Stat is what notices a hard link; the path key covers a file
+			// that disappears between the read and this check.
+			if fi, err := os.Stat(f.Name); err == nil {
+				if fileSeen(seen, fi) {
+					continue
+				}
+				seen = append(seen, fi)
+			} else if key := fileKey(f.Name); fallback[key] {
+				continue
+			} else {
+				fallback[key] = true
 			}
+			rep.issues = append(rep.issues, diff.Lint(f, opts)...)
 		}
 	}
 	return rep
 }
 
-// fileKey is the path --strict uses to notice that two arguments name the
-// same file. EvalSymlinks follows links; Abs makes ./env and env match
-// even when the link target is absolute.
+// fileSeen reports whether fi is the same file as one already linted.
+// os.SameFile matches a hard link and a symlink to that file.
+func fileSeen(seen []os.FileInfo, fi os.FileInfo) bool {
+	for _, prev := range seen {
+		if os.SameFile(prev, fi) {
+			return true
+		}
+	}
+	return false
+}
+
+// fileKey is the path --strict uses when Stat fails, so two arguments that
+// still name one path count once. EvalSymlinks follows links; Abs makes
+// ./env and env match even when the link target is absolute.
 func fileKey(name string) string {
 	p := name
 	if resolved, err := filepath.EvalSymlinks(name); err == nil {

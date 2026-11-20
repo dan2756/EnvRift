@@ -432,6 +432,9 @@ func TestRunMatrixWideNames(t *testing.T) {
 		"ステージング.env":         "B=1\n",
 		"cafe\u0301.env":     "A=1\n", // decomposed (NFD), as macOS tools often write it
 		"\u1112\u1161\u11ab": "B=1\n", // decomposed Hangul
+		"ref.env":            "A=1\nB=1\n",
+		"🚀.env":              "A=1\n",
+		"z.env":              "B=1\n",
 	})
 	tests := []struct {
 		files []string
@@ -445,6 +448,11 @@ func TestRunMatrixWideNames(t *testing.T) {
 			"KEY  .env.example  cafe\u0301.env  \u1112\u1161\u11ab  .env.example\n" +
 			"A    ✓             ✓         -   ✓\n" +
 			"B    ✓             -         ✓   ✓\n"},
+		// 🚀 is width 2, so the column after it lines up with z.env.
+		{[]string{"ref.env", "🚀.env", "z.env"}, "" +
+			"KEY  ref.env  🚀.env  z.env\n" +
+			"A    ✓        ✓       -\n" +
+			"B    ✓        -       ✓\n"},
 	}
 	for _, tt := range tests {
 		_, out, _ := runCLI(tt.files...)
@@ -467,6 +475,19 @@ func TestDisplayWidth(t *testing.T) {
 		{"ｱ", 1}, // halfwidth katakana
 		{"ＡＢ", 4},
 		{"\u200b", 0},
+		{"✓", 1},
+		{"🚀", 2},
+		{"🚀.env", 6},
+		{"⌚", 2},
+		{"⚡", 2},
+		{"🪐", 2},
+		{"❤️", 2}, // U+2764 is narrow until the emoji selector
+		{"⚡️", 2}, // already wide; the selector must not add a third column
+		{"ℹ️", 2},
+		{"1️⃣", 2},
+		{"👋🏻", 2},         // skin tone shares the base emoji's columns
+		{"🇺🇸", 2},         // a flag is two regional indicators, one column each
+		{"\U00017000", 2}, // Tangut, outside the old wcwidth blocks
 	}
 	for _, tt := range tests {
 		if got := displayWidth(tt.in); got != tt.want {

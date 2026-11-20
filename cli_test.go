@@ -288,12 +288,15 @@ func TestRunStrict(t *testing.T) {
 		t.Errorf("--strict matrix output:\n%s", out)
 	}
 
-	// The same file reached by another spelling, or by a symlink, is one
-	// file. Reporting each path would repeat the same findings.
+	// The same file reached by another spelling, a symlink, or a hard
+	// link is one file. Reporting each path would repeat the same findings.
 	if err := os.Symlink(".env", "link.env"); err != nil {
 		t.Fatal(err)
 	}
-	code, out, _ = runCLI("--strict", ".env", "./.env", "link.env", "././.env")
+	if err := os.Link(".env", "hard.env"); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ = runCLI("--strict", ".env", "./.env", "link.env", "hard.env", "././.env")
 	if code != 1 {
 		t.Fatalf("aliased paths: exit %d\n%s", code, out)
 	}
